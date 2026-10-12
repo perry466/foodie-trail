@@ -1,0 +1,64 @@
+# ============================================================
+#  美食地图 Foodie Trail — Git 忽略规则
+#  原则：非必要不上传。运行时数据 / 密钥 / 依赖 / 缓存 一律忽略。
+#  完整说明见 UPLOAD_RULES.md
+#  修改本文件前请先确认（以免误传数据或密钥）
+# ============================================================
+
+# ---------- 运行时数据（本地私有，绝不入库） ----------
+# data/ 内含：foodmap.db(数据库)、.fernet.key(加密密钥)、photos/(照片)
+# 整目录忽略，最省心也最安全
+data/
+
+# ---------- 密钥 / 环境变量 / 凭证 ----------
+.env
+.env.*
+*.local
+*.key
+*.pem
+*.p12
+secrets.*
+credentials.*
+
+# ---------- Python 虚拟环境 & 缓存 ----------
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# ---------- 打包 / 构建产物 ----------
+build/
+dist/
+*.spec
+*.exe
+*.msi
+
+# ---------- 编辑器 & 系统 ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- WorkBuddy 工作数据（AI 记忆/中间产物，不上传） ----------
+.workbuddy/
+
+# ---------- 日志 & 临时文件 ----------
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# ---------- 开发上下文（人类/AI 文档，含内部细节，绝不入库） ----------
+dev-context/
