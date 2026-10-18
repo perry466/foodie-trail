@@ -6,7 +6,7 @@
 
 ## 功能特性
 
-- 全屏地图概览：优先使用高德 JS API 底图；未配置 Key 时自动回退 Leaflet + OSM 离线底图，保证无网络环境亦可浏览。
+- 全屏地图概览：优先使用高德 JS API 底图；未配置 Key 时回退本地 Leaflet + 高德瓦片，无需 Key 亦可显示底图、打点与查看记录。
 - 按位置添加与编辑记录：直接在地图上点选取点。
 - 记录字段：名称、经纬度、评分（精确星级 1–5）、标签、营业时间、人均消费、打卡状态、备注、照片。
 - 检索与筛选：关键词搜索、精确星级筛选、标签多选筛选、打卡状态筛选、视野内筛选。
@@ -24,7 +24,7 @@
 ## 技术栈
 
 - 后端：FastAPI、SQLite、cryptography（Fernet 加密）、Pillow、aiofiles、httpx。
-- 前端：原生 JavaScript（Vue 3 经 CDN 引入）、本地 Leaflet 与 Leaflet.markercluster 库（离线可用）。
+- 前端：原生 JavaScript（Vue 3 经 CDN 引入）、本地 Leaflet 与 Leaflet.markercluster 库（库文件本地化；底图与 Vue 仍需联网）。
 - 架构特点：无外部数据库服务，前后端同进程运行，纯本地部署。
 
 ## 目录结构
@@ -42,7 +42,7 @@ foodie-trail/
 │   ├── index.html        # 应用主页面
 │   ├── css/style.css     # 样式表
 │   ├── js/app.js         # 核心逻辑（地图适配层 + Vue 应用）
-│   └── lib/              # 本地 Leaflet 与 markercluster 库（离线可用）
+│   └── lib/              # 本地 Leaflet 与 markercluster 库（库文件本地化）
 ├── requirements.txt      # Python 依赖清单
 ├── start.bat / start.sh  # 启动脚本（等价于 python -m app.main）
 ├── seed_1000.py          # 演示数据生成脚本（可选，固定随机种子可复现）
@@ -76,7 +76,7 @@ foodie-trail/
 
 ## 配置高德地图（可选）
 
-默认无地图 Key 时使用 Leaflet + OSM 离线底图，添加与浏览记录功能不受影响。若需启用高德底图及 POI 搜索、路径规划等功能：
+默认无地图 Key 时使用本地 Leaflet + 高德瓦片，添加与浏览记录功能不受影响。若需启用高德底图及 POI 搜索、路径规划等功能：
 
 1. 在高德开放平台申请 JS API Key、安全密钥与 Web 服务 Key。
 2. 在应用「设置」面板录入。Key 经 Fernet 加密后仅保存于本地数据库 `data/foodmap.db`，不会出现在源码中，也不会随仓库上传。

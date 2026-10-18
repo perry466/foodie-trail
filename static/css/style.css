@@ -109,7 +109,9 @@ button{ font-family:inherit; cursor:pointer; }
 .drawer-count{ font-size:12px; color:var(--muted); }
 
 /* 列表项（缩略图左 / 信息右） */
-.rec-list{ list-style:none; margin:0; padding:0; }
+/* 列表是抽屉里唯一的滚动区：必须 flex:1 + min-height:0，
+   否则内容把底部「删除所选」操作条顶出屏幕（批量删除按钮会看不到） */
+.rec-list{ list-style:none; margin:0; padding:0 0 6px; flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
 .rec-card{ display:flex; gap:12px; padding:12px; border-radius:14px; cursor:pointer; transition:background .15s ease; }
 .rec-card:hover{ background:rgba(0,0,0,.04); }
 [data-theme="dark"] .rec-card:hover{ background:rgba(255,255,255,.05); }
@@ -123,6 +125,53 @@ button{ font-family:inherit; cursor:pointer; }
 .rec-star-off{ color:var(--border); }
 .rec-price{ color:var(--muted); }
 .rec-tags{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+
+/* 批量删除：入口按钮 / 勾选圈 / 选中态 / 选择工具栏 / 底部操作条 */
+.drawer-batch{
+  margin-left:auto; flex:none; display:inline-flex; align-items:center; gap:4px;
+  border:1px solid rgba(240,80,47,.45); background:rgba(240,80,47,.08); color:var(--primary);
+  font-size:12px; font-weight:600; padding:5px 10px; border-radius:10px; white-space:nowrap;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.drawer-batch svg{ width:13px; height:13px; }
+.drawer-batch:hover{ background:var(--primary); border-color:var(--primary); color:#fff; }
+.rec-card.sel{ background:rgba(240,80,47,.08); }
+.rec-card.sel:hover{ background:rgba(240,80,47,.12); }
+[data-theme="dark"] .rec-card.sel{ background:rgba(240,80,47,.18); }
+[data-theme="dark"] .rec-card.sel:hover{ background:rgba(240,80,47,.24); }
+.rec-check{
+  flex:none; align-self:center; width:22px; height:22px; border-radius:50%;
+  border:1.5px solid var(--border); display:flex; align-items:center; justify-content:center;
+  color:transparent; background:transparent; transition:background .15s,border-color .15s,color .15s;
+}
+.rec-check svg{ width:13px; height:13px; }
+.rec-check.on{ background:var(--primary); border-color:var(--primary); color:#fff; }
+/* 选择工具栏（搜索栏下方） */
+.sel-tools{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:10px 20px; margin:0 0 4px;
+  border-top:1px solid var(--border); border-bottom:1px solid var(--border);
+  background:rgba(240,80,47,.05);
+}
+[data-theme="dark"] .sel-tools{ background:rgba(240,80,47,.1); }
+.sel-link{ border:none; background:transparent; color:var(--primary); font-size:13px; font-weight:600; padding:2px; }
+.sel-link:hover{ text-decoration:underline; }
+.sel-sep{ color:var(--muted); font-size:12px; }
+.sel-hint{ margin-left:auto; font-size:12px; color:var(--muted); white-space:nowrap; }
+.sel-hint b{ color:var(--text); }
+/* 底部操作条 */
+.sel-bar{ flex:none; display:flex; align-items:center; gap:10px; padding:12px 20px; border-top:1px solid var(--border); background:rgba(15,23,42,.02); }
+[data-theme="dark"] .sel-bar{ background:rgba(255,255,255,.03); }
+.sel-warn{ font-size:12px; color:var(--muted); margin-right:auto; }
+.sel-del{ padding:7px 14px; }
+.sel-del:disabled{ opacity:.4; cursor:not-allowed; }
+.sel-del:disabled:hover{ background:transparent; }
+.sel-cancel{ color:var(--muted); }
+/* 更多菜单分隔线与危险项 */
+.more-divider{ height:1px; margin:5px 8px; background:var(--border); }
+.more-item--danger{ color:#e5556f; }
+.more-item--danger svg{ color:#e5556f; }
+.more-item--danger:hover{ background:rgba(229,85,111,.1); }
 
 /* 低饱和标签 / 状态徽章 */
 .tag{ font-size:11px; padding:2px 9px; border-radius:999px; background:rgba(15,23,42,.06); color:#5b6470; }
@@ -172,6 +221,25 @@ button{ font-family:inherit; cursor:pointer; }
 .modal-body{ padding:20px; overflow-y:auto; }
 .modal-foot{ display:flex; align-items:center; gap:10px; padding:14px 20px; border-top:1px solid var(--border); }
 
+/* 应用内确认弹窗（替代浏览器原生 confirm） */
+.confirm-card{ max-width:400px; }
+.confirm-body{ padding:26px 24px 18px; text-align:center; }
+.confirm-icon{
+  width:52px; height:52px; border-radius:50%; margin:0 auto 14px;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(240,80,47,.1); color:var(--primary);
+}
+.confirm-icon.danger{ background:rgba(229,85,119,.12); color:#e5556f; }
+[data-theme="dark"] .confirm-icon.danger{ background:rgba(229,85,119,.2); }
+.confirm-icon svg{ width:26px; height:26px; }
+.confirm-body h3{ margin:0 0 8px; font-size:17px; font-weight:700; color:var(--text); }
+.confirm-body p{ margin:0; font-size:13px; line-height:1.7; color:var(--muted); word-break:break-word; }
+.confirm-foot{ display:flex; gap:10px; padding:0 24px 22px; }
+.confirm-foot button{ flex:1; }
+.confirm-foot .btn-danger{ background:#e5556f; border-color:#e5556f; color:#fff; }
+.confirm-foot .btn-danger:hover{ background:#d8455f; border-color:#d8455f; }
+.confirm-foot .btn-danger:disabled{ opacity:.6; cursor:not-allowed; }
+
 /* 表单 */
 .form-grid{ display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
 .field{ display:block; margin-bottom:16px; }
@@ -202,6 +270,21 @@ button{ font-family:inherit; cursor:pointer; }
 .loc-row{ display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap; }
 .loc-label{ font-size:13px; color:var(--text); flex:1; min-width:140px; }
 .poi-result{ margin-top:10px; max-height:160px; overflow:auto; }
+.poi-hint{
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+  padding:9px 12px; border-radius:10px; font-size:12.5px; line-height:1.6;
+  background:rgba(240,80,47,.07); color:var(--text);
+}
+[data-theme="dark"] .poi-hint{ background:rgba(240,80,47,.14); }
+
+/* 添加表单的草稿提示条 */
+.draft-bar{
+  display:flex; align-items:center; gap:10px; flex:none;
+  padding:9px 20px; border-bottom:1px solid var(--border);
+  background:rgba(47,128,237,.08); font-size:12.5px; color:var(--text);
+}
+.draft-bar span{ flex:1; }
+[data-theme="dark"] .draft-bar{ background:rgba(47,128,237,.16); }
 .poi-item{ padding:9px 11px; border-radius:10px; border:1px solid var(--border); margin-bottom:6px; cursor:pointer; }
 .poi-item:hover{ background:rgba(0,0,0,.04); }
 .poi-item small{ color:var(--muted); display:block; }

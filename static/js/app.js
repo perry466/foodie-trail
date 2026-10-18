@@ -10,9 +10,9 @@ const API = {
   async get(url){ const r = await fetch(url); if(!r.ok) throw await err(r); return r.json(); },
   async sendForm(url, method, body){ const r = await fetch(url,{method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}); if(!r.ok) throw await err(r); return r.json(); },
   async upload(url, file){ const fd=new FormData(); fd.append('file',file); const r=await fetch(url,{method:'POST',body:fd}); if(!r.ok) throw await err(r); return r.json(); },
-  async del(url){ const r=await fetch(url,{method:'DELETE'}); if(!r.ok) throw await err(r); return r.json(); },
+  async del(url, body){ const opt={method:'DELETE'}; if(body!==undefined){ opt.headers={'Content-Type':'application/json'}; opt.body=JSON.stringify(body); } const r=await fetch(url,opt); if(!r.ok) throw await err(r); return r.json(); },
 };
-async function err(r){ try{ const j=await r.json(); return new Error(j.detail||j.msg||r.statusText); }catch{ return new Error(r.statusText); } }
+async function err(r){ const base=r.statusText; try{ const j=await r.json(); const e=new Error(j.detail||j.msg||base); e.status=r.status; return e; }catch{ const e=new Error(base); e.status=r.status; return e; } }
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.remove('hidden'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.add('hidden'),2200); }
@@ -21,6 +21,7 @@ function ratingColor(r){ return r<=2?'#9aa0a6':r===3?'#2f80ed':'#f0502f'; }
 function pinHTML(r){ return `<div style="background:${ratingColor(r)};box-sizing:border-box;width:34px;height:34px;border:2.5px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.35)"><span style="transform:rotate(45deg);display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/></svg></span></div>`; }
 function clusterHTML(n){ const size = n>=100?46:(n>=10?40:34); return `<div class="fm-cluster" style="width:${size}px;height:${size}px">${n}</div>`; }
 const MAP_LIMIT = 600; // 地图单次加载图钉上限（按视野取，缩到全中国也不超量）
+const DRAFT_KEY = 'fm-form-draft-v1';   // 添加表单的本地草稿（未提交内容）
 
 /* ---------------- 地图适配 ---------------- */
 const MapView = {
@@ -264,7 +265,9 @@ const App = {
       showMarkers:true,
       moreOpen:false,
       settingsOpen:false, formOpen:false, detailOpen:false, dashOpen:false, importOpen:false,
+      confirmBox:{ open:false, title:'', message:'', ok:'确认', danger:false, busy:false, onlyOk:false },
       records:[], page:1, pageSize:100, listTotal:0,
+      selectMode:false, selectedIds:[],
       filters:{ keyword:'', sort:'updatedAt:desc', tags:[], rating:0, checkin:'', viewOnly:false },
       viewBounds:null,
       allTags:[],
@@ -276,6 +279,7 @@ const App = {
       importPreview:'', importReady:false, importFile:null,
       pickMode:false, pickCb:null, _tempMarker:null,
       mapConfig:{ configured:false },
+      draftNotice:'', draftSaved:false, _suppressDraft:false,
       _mapSeq:0, _mmT:null,
     };
   },
@@ -288,10 +292,56 @@ const App = {
     },
     pages(){ const size=this.pageSize||100; return Math.max(1,Math.ceil(this.records.length/size)); },
   },
+  watch:{
+    form:{ handler(){ this.scheduleDraft(); }, deep:true },
+    formTags:{ handler(){ this.scheduleDraft(); }, deep:true },
+    hours:{ handler(){ this.scheduleDraft(); }, deep:true },
+    locLabel(){ this.scheduleDraft(); },
+  },
   methods:{
     statusOf(r){ return {want:'想去',visited:'去过',favorite:'收藏'}[r.checkinStatus]||''; },
     photoURL(f){ return URL.createObjectURL(f); },
     fmtHours(s){ return fmtHoursRaw(s); },
+
+    /* 应用内确认弹窗（替代浏览器原生 confirm） */
+    askConfirm(opts){
+      return new Promise(resolve=>{
+        this._confirmResolve=resolve;
+        this.confirmBox={
+          open:true,
+          title:opts.title||'请确认',
+          message:opts.message||'',
+          ok:opts.ok||'确认',
+          danger:!!opts.danger,
+          busy:false,
+          onlyOk:!!opts.onlyOk,
+        };
+      });
+    },
+    closeConfirm(v){
+      const r=this._confirmResolve;
+      this._confirmResolve=null;
+      this.confirmBox={...this.confirmBox, open:false, busy:false};
+      if(r) r(!!v);
+    },
+    setConfirmBusy(v){ this.confirmBox={...this.confirmBox, busy:!!v}; },
+    showError(title, msg){
+      return this.askConfirm({ title, message:msg, ok:'知道了', onlyOk:true });
+    },
+
+    /* 批量删除的请求层：批量接口不可用（旧版服务）时退化为逐条删除 */
+    async removeRecords(ids){
+      try{
+        const r=await API.del('/api/records/batch',{ids});
+        return (r&&r.deleted!=null)?r.deleted:ids.length;
+      }catch(e){
+        const fallback=[404,405,422,501].includes(e.status);
+        if(!fallback) throw e;
+        let n=0;
+        for(const id of ids){ await API.del('/api/records/'+id); n++; }
+        return n;
+      }
+    },
 
     /* 主题 */
     toggleTheme(){
@@ -312,7 +362,7 @@ const App = {
 
     /* 面板开关 */
     togglePanel(name){ this.moreOpen=false; this.panel = this.panel===name ? 'none' : name; },
-    closePanel(){ this.panel='none'; },
+    closePanel(){ this.panel='none'; this.exitSelect(); },
     fitChina(){ MapView.fitChina(); this.moreOpen=false; },
 
     /* 数据加载 */
@@ -323,6 +373,11 @@ const App = {
       try{
         const recs=await API.get(url);
         this.records=recs; this.listTotal=recs.length; this.page=1;
+        // 清除已不存在于当前结果里的选中项（如被筛掉或已删除），避免误删
+        if(this.selectedIds.length){
+          const alive=new Set(recs.map(r=>r.id));
+          this.selectedIds=this.selectedIds.filter(id=>alive.has(id));
+        }
         const cnt={}; recs.forEach(r=>(r.tags||[]).forEach(t=>cnt[t]=(cnt[t]||0)+1));
         this.allTags=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([t,c])=>({t,c}));
         await this.reloadMap();   // 地图按视野动态加载，不再全量渲染
@@ -366,9 +421,64 @@ const App = {
     closeDetail(){ this.detailOpen=false; },
     async deleteDetail(){
       if(!this.detail) return;
-      if(!confirm('确认删除「'+this.detail.name+'」？')) return;
-      try{ await API.del('/api/records/'+this.detail.id); toast('已删除'); this.detailOpen=false; this.detail=null; await this.loadRecords(); }
-      catch(e){ toast('删除失败：'+e.message); }
+      const id=this.detail.id, name=this.detail.name;
+      const ok=await this.askConfirm({
+        title:'删除这条记录？',
+        message:`「${name}」及其照片会被永久删除，此操作不可撤销。`,
+        ok:'删除', danger:true,
+      });
+      if(!ok) return;
+      this.setConfirmBusy(true);
+      try{
+        await API.del('/api/records/'+id);
+        this.closeConfirm(true);
+        toast('已删除');
+        this.detailOpen=false; this.detail=null;
+        await this.loadRecords();
+      }catch(e){
+        this.closeConfirm(true);
+        await this.showError('删除失败', e.message||'未知错误');
+      }
+    },
+
+    /* 批量选择 / 批量删除（列表抽屉内） */
+    enterSelect(){ this.moreOpen=false; this.panel='list'; this.selectMode=true; },
+    exitSelect(){ this.selectMode=false; this.selectedIds=[]; },
+    isSelected(id){ return this.selectedIds.includes(id); },
+    toggleSelect(id){
+      const i=this.selectedIds.indexOf(id);
+      if(i>=0) this.selectedIds.splice(i,1); else this.selectedIds.push(id);
+    },
+    /* 全选：作用于当前筛选后的全部结果（不限于当前页） */
+    selectAll(){ this.selectedIds=this.records.map(r=>r.id); },
+    /* 反选：当前结果集中未选中的变为选中，已选中的取消 */
+    invertSelect(){
+      const sel=new Set(this.selectedIds);
+      this.selectedIds=this.records.filter(r=>!sel.has(r.id)).map(r=>r.id);
+    },
+    clearSelect(){ this.selectedIds=[]; },
+    async batchDelete(){
+      const ids=[...this.selectedIds];
+      if(!ids.length) return;
+      const ok=await this.askConfirm({
+        title:`删除 ${ids.length} 条记录？`,
+        message:'所选记录及其照片会被永久删除，此操作不可撤销。',
+        ok:`删除 ${ids.length} 条`, danger:true,
+      });
+      if(!ok) return;
+      this.setConfirmBusy(true);
+      try{
+        const n=await this.removeRecords(ids);
+        this.closeConfirm(true);
+        toast(`已删除 ${n} 条`);
+        if(this.detail && ids.includes(this.detail.id)){ this.detailOpen=false; this.detail=null; }
+        this.exitSelect();
+        await this.loadRecords();
+      }catch(e){
+        this.closeConfirm(true);
+        await this.loadRecords();          // 可能已部分删除，先让列表回到真实状态
+        await this.showError('删除失败', `${e.message||'未知错误'}。若问题持续，请关闭窗口重新运行 start.bat 后再试。`);
+      }
     },
 
     /* 筛选 */
@@ -413,7 +523,52 @@ const App = {
     },
 
     /* 表单 */
+    /* 添加表单草稿：不小心关掉弹窗后，已填内容不丢（localStorage，仅本机） */
+    scheduleDraft(){ clearTimeout(this._draftT); this._draftT=setTimeout(()=>this._saveDraft(),400); },
+    _hasDraftContent(){
+      const f=this.form;
+      return !!(f.name.trim()||f.address.trim()||f.note.trim()||f.lat!=null||this.formTags.length);
+    },
+    _saveDraft(){
+      if(this._suppressDraft || this.form.id) return;   // 编辑既有记录不存草稿
+      if(!this._hasDraftContent()){ this.clearDraft(); return; }
+      try{
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({
+          form:{...this.form}, tags:[...this.formTags], hours:this.hours,
+          locLabel:this.locLabel, photoCount:this.formNewPhotos.length, savedAt:Date.now(),
+        }));
+        this.draftSaved=true;
+      }catch{}
+    },
+    _restoreDraft(){
+      let d=null;
+      try{ d=JSON.parse(localStorage.getItem(DRAFT_KEY)||'null'); }catch{}
+      if(!d||!d.form) return false;
+      const f=d.form;
+      const has=(f.name&&f.name.trim())||(f.address&&f.address.trim())||(f.note&&f.note.trim())||f.lat!=null||(d.tags&&d.tags.length);
+      if(!has) return false;
+      this.form={...this.form,...f,id:null};
+      this.formTags=[...(d.tags||[])];
+      this.hours=d.hours||parseHours(null);
+      this.locLabel=d.locLabel||'未选点（在地图上点选）';
+      this.draftNotice='已恢复上次未保存的内容';
+      if(d.photoCount) this.draftNotice+=`，其中 ${d.photoCount} 张照片需重新选择`;
+      this.draftSaved=true;
+      return true;
+    },
+    clearDraft(){
+      try{ localStorage.removeItem(DRAFT_KEY); }catch{}
+      this.draftSaved=false; this.draftNotice='';
+    },
+    resetFormDraft(){
+      this.clearDraft();
+      this.form={ id:null, name:'', rating:3, price:'', checkin:'', note:'', draft:false, lat:null, lng:null, address:'' };
+      this.formTags=[]; this.formPhotos=[]; this.formNewPhotos=[]; this.formRemoved=[];
+      this.hours=parseHours(null); this.locLabel='未选点（在地图上点选）'; this.formMsg=''; this.tagInput='';
+      this.$nextTick(()=>this.renderHoursEditor());
+    },
     openForm(rec){ this.moreOpen=false; this.panel='none';
+      this._suppressDraft=true;          // 初始化字段期间不要覆盖已有草稿
       this.form.id=rec?rec.id:null;
       this.form.name=rec?rec.name:'';
       this.form.rating=rec?rec.rating:3;
@@ -430,8 +585,10 @@ const App = {
       this.hours=parseHours(rec?rec.businessHours:null);
       this.locLabel=rec?`已选点 (${rec.lat.toFixed(4)}, ${rec.lng.toFixed(4)})`:'未选点（在地图上点选）';
       this.formMsg=''; this.tagInput='';
+      this.draftNotice=''; this.draftSaved=false;
+      if(!rec) this._restoreDraft();     // 新建时自动恢复未提交的草稿
       this.formOpen=true;
-      this.$nextTick(()=>this.renderHoursEditor());
+      this.$nextTick(()=>{ this.renderHoursEditor(); this._suppressDraft=false; });
     },
     addTag(){
       const v=this.tagInput.trim();
@@ -463,30 +620,46 @@ const App = {
         MapView.tempMarker(gc.lng,gc.lat);
       },()=>toast('定位被拒，请手动选点'),{enableHighAccuracy:true,timeout:8000});
     },
+    /* 在地址输入框下方给出可读的提示（而不是只闪一个 toast） */
+    poiHint(html, withSettings){
+      const box=$('#poiResult'); if(!box) return;
+      box.innerHTML=`<div class="poi-hint">${html}${withSettings?' <button type="button" class="sel-link" data-act="settings">去设置</button>':''}</div>`;
+      const b=box.querySelector('[data-act="settings"]');
+      if(b) b.onclick=()=>{ box.innerHTML=''; this.openSettings(); };
+    },
     async geocode(){
       const addr=this.form.address.trim(); if(!addr) return;
-      if(!this.mapConfig.configured){ toast('未配置高德 Key，无法搜索地址'); return; }
+      if(!this.mapConfig.webConfigured){ this.poiHint(esc('地址解析需要「Web 服务」类型的 Key，当前只配置了前端地图 Key。'), true); return; }
       try{
         const data=await API.get('/api/amap/geocode?address='+encodeURIComponent(addr));
         const g=data.geocodes&&data.geocodes[0];
-        if(!g){ toast('未找到地址'); return; }
+        if(!g){ this.poiHint('未找到该地址，试试更完整的写法，或直接在地图上点选。'); return; }
         const [lng,lat]=g.location.split(',').map(Number);
         this.form.lng=lng; this.form.lat=lat;
         this.locLabel=`${g.formatted_address} (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
         MapView.tempMarker(lng,lat);
-      }catch(e){ toast('地理编码失败：'+e.message); }
+        this.poiHint(esc(`已定位：${g.formatted_address}`));
+      }catch(e){
+        this.poiHint(esc(e.message), /Key/i.test(e.message));
+      }
     },
     searchPOI(){
-      const kw=this.form.address.trim(); if(!kw) return;
-      if(!this.mapConfig.configured){ $('#poiResult').innerHTML='<div class="hint">未配置高德 Key，无法搜索 POI</div>'; return; }
+      const kw=this.form.address.trim();
+      const box=$('#poiResult');
+      if(!kw){ if(box) box.innerHTML=''; return; }
+      if(!this.mapConfig.configured){ this.poiHint('未配置高德 Key，当前是兜底地图模式，无法搜索地址。', true); return; }
+      if(!this.mapConfig.webConfigured){ this.poiHint(esc('搜索地址需要「Web 服务」类型的 Key（与地图 Key 不是同一个）。'), true); return; }
       clearTimeout(this._poi);
       this._poi=setTimeout(async()=>{
         try{
           const data=await API.get('/api/amap/poi?keywords='+encodeURIComponent(kw));
           const tips=(data.tips||[]).filter(t=>t.location);
-          $('#poiResult').innerHTML = tips.map((t,i)=>`<div class="poi-item" data-i="${i}" data-lng="${t.location.split(',')[0]}" data-lat="${t.location.split(',')[1]}">${esc(t.name)}<small>${esc(t.district||'')} ${esc(t.address||'')}</small></div>`).join('') || '<div class="hint">无结果</div>';
+          if(!tips.length){ this.poiHint('没有搜到匹配的地点，试试更具体的关键词。'); return; }
+          $('#poiResult').innerHTML = tips.map((t,i)=>`<div class="poi-item" data-i="${i}" data-lng="${t.location.split(',')[0]}" data-lat="${t.location.split(',')[1]}">${esc(t.name)}<small>${esc(t.district||'')} ${esc(t.address||'')}</small></div>`).join('');
           $$('#poiResult .poi-item').forEach(el=>el.onclick=()=>{ const lng=+el.dataset.lng,lat=+el.dataset.lat; this.form.lng=lng; this.form.lat=lat; this.locLabel=`${el.childNodes[0].textContent} (${lat.toFixed(4)}, ${lng.toFixed(4)})`; MapView.tempMarker(lng,lat); $('#poiResult').innerHTML=''; });
-        }catch(e){ toast('POI 搜索失败：'+e.message); }
+        }catch(e){
+          this.poiHint(esc(e.message), /Key/i.test(e.message));
+        }
       },400);
     },
     renderHoursEditor(){
@@ -530,7 +703,7 @@ const App = {
         else rec=await API.sendForm('/api/records','POST',body);
         for(const f of this.formNewPhotos) await API.upload('/api/records/'+rec.id+'/photos',f);
         for(const pid of this.formRemoved) await API.del('/api/photos/'+pid);
-        toast('已保存'); this.formOpen=false; await this.loadRecords();
+        toast('已保存'); this.clearDraft(); this.formOpen=false; await this.loadRecords();
         if(this.detailOpen && this.detail && this.detail.id===rec.id) this.detail=rec;
       }catch(e){ this.formMsg='保存失败：'+e.message; }
     },
@@ -584,7 +757,7 @@ const App = {
       }
       if(e.key==='n'||e.key==='N'){ this.openForm(null); }
       else if(e.key==='/'){ e.preventDefault(); const el=$('.drawer-search input'); if(el) el.focus(); }
-      else if(e.key==='Escape'){ this.panel='none'; this.moreOpen=false; this.settingsOpen=this.formOpen=this.detailOpen=this.dashOpen=this.importOpen=false; }
+      else if(e.key==='Escape'){ if(this.confirmBox.open){ this.closeConfirm(false); return; } if(this.selectMode){ this.exitSelect(); return; } this.panel='none'; this.moreOpen=false; this.settingsOpen=this.formOpen=this.detailOpen=this.dashOpen=this.importOpen=false; }
     });
     document.addEventListener('click',e=>{ if(this.moreOpen && !e.target.closest('.menubar')) this.moreOpen=false; });
     // 启动

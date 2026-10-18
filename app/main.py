@@ -57,6 +57,10 @@ class AmapKeyIn(BaseModel):
     web_key: Optional[str] = None   # 后端 Web 服务 Key（POI/地理编码/路线代理，不下发前端）
 
 
+class BatchDeleteIn(BaseModel):
+    ids: list[str] = []             # 待批量删除的记录 id 列表
+
+
 # ---------- 工具 ----------
 def _now() -> int:
     return int(time.time() * 1000)
@@ -162,6 +166,22 @@ def update_record(rid: str, body: RecordIn):
     payload["updatedAt"] = _now()
     rec = repo.update(rid, payload)
     return rec
+
+
+# 注意：批量路由必须注册在 /api/records/{rid} 之前，否则 "batch" 会被当成 rid 捕获
+@app.delete("/api/records/batch")
+def delete_records_batch(body: BatchDeleteIn):
+    """批量删除：先删照片文件，再一次性删记录（photos 表随外键级联清理）。"""
+    ids, seen = [], set()
+    for rid in (body.ids or []):
+        if isinstance(rid, str) and rid and rid not in seen:
+            seen.add(rid)
+            ids.append(rid)
+    if not ids:
+        return {"ok": True, "deleted": 0}
+    for path in repo.photo_paths(ids):
+        _remove_photo_file(path)
+    return {"ok": True, "deleted": repo.delete_many(ids)}
 
 
 @app.delete("/api/records/{rid}")
@@ -287,28 +307,58 @@ def test_connection():
 
 
 # ---------- 高德代理（数据请求走后端，前端不持 Key） ----------
+# 高德返回 status=0 时，把 info 翻译成可操作的中文提示，避免前端只看到英文错误码
+_AMAP_INFO_HINTS = {
+    "INVALID_USER_KEY": "高德 Key 无效或已失效，请在「设置」里重新填写",
+    "USER_KEY_REQUIRED": "缺少高德 Key，请先在「设置」里填写",
+    "USERKEY_PLAT_NOMATCH": "Key 类型不对：POI 搜索/地址解析必须用「Web 服务」类型的 Key，不能用「Web 端(JS API)」Key",
+    "INVALID_USER_SCODE": "Key 与安全密钥不匹配，请重新核对 JS API Key 和 securityJsCode",
+    "DAILY_QUERY_OVER_LIMIT": "今日调用配额已用完（个人 Key 有每日限额），请明天再试或更换 Key",
+    "INSUFFICIENT_PRIVILEGES": "该 Key 没有 Web 服务接口权限，请在高德控制台开通",
+    "SERVICE_NOT_AVAILABLE": "高德服务暂不可用，请稍后再试",
+    "INVALID_PARAMS": "搜索参数不合法，请换个关键词试试",
+    "ENGINE_RESPONSE_DATA_ERROR": "高德返回数据异常，请稍后再试",
+}
+
+
+def _amap_call(url: str, params: dict) -> dict:
+    """调用高德 Web 服务并统一处理错误：返回 status=1 的数据，否则抛出带中文说明的 400。"""
+    try:
+        r = httpx.get(url, params=params, timeout=8)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"连接高德服务失败：{e.__class__.__name__}")
+    try:
+        data = r.json()
+    except Exception:
+        raise HTTPException(502, "高德返回内容无法解析")
+    if str(data.get("status")) == "1":
+        return data
+    info = data.get("info") or "未知错误"
+    code = data.get("infocode") or ""
+    hint = _AMAP_INFO_HINTS.get(info) or f"高德返回错误：{info}"
+    raise HTTPException(400, f"{hint}（{code}）" if code else hint)
+
+
 @app.get("/api/amap/poi")
 def amap_poi(keywords: str, city: str = ""):
     key = _amap_web_key()
     if not key:
-        raise HTTPException(400, "未配置高德 Web 服务 Key")
-    r = httpx.get(
+        raise HTTPException(400, "未配置高德 Web 服务 Key：POI 搜索需要「Web 服务」类型的 Key，请在「设置 → ③ 后端 Web 服务 Key」里填写")
+    return _amap_call(
         f"{AMAP_REST}/v3/assistant/inputtips",
-        params={"key": key, "keywords": keywords, "city": city}, timeout=8,
+        {"key": key, "keywords": keywords, "city": city},
     )
-    return r.json()
 
 
 @app.get("/api/amap/geocode")
 def amap_geocode(address: str):
     key = _amap_web_key()
     if not key:
-        raise HTTPException(400, "未配置高德 Web 服务 Key")
-    r = httpx.get(
+        raise HTTPException(400, "未配置高德 Web 服务 Key：地址解析需要「Web 服务」类型的 Key，请在「设置 → ③ 后端 Web 服务 Key」里填写")
+    return _amap_call(
         f"{AMAP_REST}/v3/geocode/geo",
-        params={"key": key, "address": address}, timeout=8,
+        {"key": key, "address": address},
     )
-    return r.json()
 
 
 @app.get("/api/amap/route")
@@ -316,13 +366,11 @@ def amap_route(origin: str, destination: str):
     """origin/destination: 'lng,lat'。返回驾车距离(米)。"""
     key = _amap_web_key()
     if not key:
-        raise HTTPException(400, "未配置高德 Web 服务 Key")
-    r = httpx.get(
+        raise HTTPException(400, "未配置高德 Web 服务 Key：路线需要「Web 服务」类型的 Key")
+    return _amap_call(
         f"{AMAP_REST}/v3/direction/driving",
-        params={"key": key, "origin": origin, "destination": destination, "extensions": "base"},
-        timeout=8,
+        {"key": key, "origin": origin, "destination": destination, "extensions": "base"},
     )
-    return r.json()
 
 
 # ---------- 坐标转换 ----------

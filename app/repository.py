@@ -7,6 +7,14 @@ from typing import Optional
 
 from .db import get_conn
 
+# SQLite 单条 SQL 的参数上限默认 999，批量 IN 操作按 400 分批
+_CHUNK_SIZE = 400
+
+
+def _chunks(seq, size: int = _CHUNK_SIZE):
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
 
 def _row_to_record(row, with_photos: bool = False) -> dict:
     rec = {
@@ -52,6 +60,10 @@ class RecordRepository(ABC):
     def update(self, rid: str, payload: dict): ...
     @abstractmethod
     def delete(self, rid: str): ...
+    @abstractmethod
+    def delete_many(self, ids: list) -> int: ...
+    @abstractmethod
+    def photo_paths(self, ids: list) -> list: ...
 
 
 class SQLiteRepository(RecordRepository):
@@ -151,6 +163,40 @@ class SQLiteRepository(RecordRepository):
     def delete(self, rid: str):
         with get_conn() as conn:
             conn.execute("DELETE FROM records WHERE id=?", (rid,))
+
+    def delete_many(self, ids: list) -> int:
+        """单连接、分批删除多条记录；photos 表随外键 ON DELETE CASCADE 清理。
+
+        SQLite 的 IN 参数上限默认 999，且每次新建连接都会重新执行
+        `PRAGMA journal_mode=WAL`（需抢写锁），逐条删 1000 条会因锁竞争慢到超时，
+        因此这里共用一条连接并每批 400 个 id。
+        """
+        if not ids:
+            return 0
+        total = 0
+        with get_conn() as conn:
+            for chunk in _chunks(ids):
+                placeholders = ",".join("?" for _ in chunk)
+                cur = conn.execute(
+                    f"DELETE FROM records WHERE id IN ({placeholders})", tuple(chunk)
+                )
+                total += cur.rowcount or 0
+        return total
+
+    def photo_paths(self, ids: list) -> list:
+        """批量取照片文件路径（删除记录前清理磁盘文件用），同样单连接分批查询。"""
+        if not ids:
+            return []
+        paths = []
+        with get_conn() as conn:
+            for chunk in _chunks(ids):
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"SELECT path FROM photos WHERE record_id IN ({placeholders})",
+                    tuple(chunk),
+                ).fetchall()
+                paths += [r["path"] for r in rows]
+        return paths
 
     def upsert(self, payload: dict):
         """导入用：存在则按 updatedAt 较新覆盖，否则插入。"""
