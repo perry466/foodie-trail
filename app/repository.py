@@ -3,12 +3,37 @@
 """
 import json
 from abc import ABC, abstractmethod
+from collections import Counter
+from datetime import datetime
 from typing import Optional
 
 from .db import get_conn
 
 # SQLite 单条 SQL 的参数上限默认 999，批量 IN 操作按 400 分批
 _CHUNK_SIZE = 400
+
+
+def _pct(part: int, whole: int) -> float:
+    """占比（百分比，保留 1 位小数）；分母为 0 时返回 0。"""
+    return round(part * 100 / whole, 1) if whole else 0.0
+
+
+def _epoch_ms(value) -> int:
+    """created_at 统一为毫秒时间戳；兼容历史数据里可能存在的字符串写法。"""
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
+    if isinstance(value, str):
+        txt = value.strip().replace("Z", "+00:00")
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+            try:
+                return int(datetime.strptime(txt[:19], fmt).timestamp() * 1000)
+            except ValueError:
+                continue
+        try:
+            return int(datetime.fromisoformat(txt).timestamp() * 1000)
+        except ValueError:
+            return 0
+    return 0
 
 
 def _chunks(seq, size: int = _CHUNK_SIZE):
@@ -259,39 +284,188 @@ class SQLiteRepository(RecordRepository):
             conn.execute("DELETE FROM settings WHERE key=?", (key,))
 
     def dashboard(self) -> dict:
+        """看板聚合：一次查询取回全部记录，在内存里算出所有指标。
+
+        旧实现发了 12 条独立 SQL，且"城市"用 1° 经纬度网格近似（约 110km），
+        语义不准 → 现统一改称"区域"。新增状态构成、评分分布、价位分布、
+        月度趋势、行动清单与数据健康度。
+        """
         with get_conn() as conn:
-            total = conn.execute("SELECT COUNT(*) c FROM records WHERE draft=0").fetchone()["c"]
-            visited = conn.execute(
-                "SELECT COUNT(*) c FROM records WHERE checkin_status='visited' AND draft=0"
-            ).fetchone()["c"]
-            want = conn.execute(
-                "SELECT COUNT(*) c FROM records WHERE checkin_status='want' AND draft=0"
-            ).fetchone()["c"]
-            favorite = conn.execute(
-                "SELECT COUNT(*) c FROM records WHERE checkin_status='favorite' AND draft=0"
-            ).fetchone()["c"]
-            # 城市数：按经纬度粗略四舍五入聚类到 1° 网格近似"城市"
             rows = conn.execute(
-                "SELECT DISTINCT round(lat,1), round(lng,1) FROM records WHERE draft=0"
+                """SELECT r.id, r.name, r.rating, r.avg_price, r.checkin_status, r.tags,
+                          r.note, r.created_at, r.lat, r.lng,
+                          (SELECT COUNT(*) FROM photos p WHERE p.record_id = r.id) AS photo_count
+                   FROM records r WHERE r.draft = 0"""
             ).fetchall()
-            cities = len(rows)
-            avg_rows = conn.execute(
-                "SELECT avg_price FROM records WHERE avg_price IS NOT NULL AND draft=0"
-            ).fetchall()
-            avg_price_list = [r["avg_price"] for r in avg_rows]
-            # Top 菜系（标签频次）
-            tag_rows = conn.execute("SELECT tags FROM records WHERE draft=0").fetchall()
-            from collections import Counter
-            cnt = Counter()
-            for r in tag_rows:
-                for t in (json.loads(r["tags"]) if r["tags"] else []):
-                    cnt[t] += 1
-            top_cuisines = [{"tag": k, "count": v} for k, v in cnt.most_common(10)]
-            avg_price_avg = round(sum(avg_price_list) / len(avg_price_list), 1) if avg_price_list else 0
+            photo_total = conn.execute("SELECT COUNT(*) c FROM photos").fetchone()["c"]
+
+        total = len(rows)
+        status = {"visited": 0, "want": 0, "favorite": 0}
+        rating_dist = {s: 0 for s in range(1, 6)}
+        rating_sum = rating_n = 0
+        prices: list = []
+        tag_cnt: Counter = Counter()
+        regions = set()
+        want_items: list = []
+        q_no_price = q_no_tags = q_no_note = q_no_photo = 0
+        with_photo = 0
+        newest_days = None
+
+        now = datetime.now()
+        months: list = []
+        for back in range(11, -1, -1):
+            mi = (now.year * 12 + now.month - 1) - back
+            months.append(f"{mi // 12:04d}-{mi % 12 + 1:02d}")
+        month_index = {k: 0 for k in months}
+
+        for r in rows:
+            st = r["checkin_status"] or ""
+            if st in status:
+                status[st] += 1
+
+            rating = r["rating"]
+            if isinstance(rating, int) and 1 <= rating <= 5:
+                rating_dist[rating] += 1
+                rating_sum += rating
+                rating_n += 1
+            else:
+                rating = 0          # 脏数据不参与分布，也不影响均分
+
+            price = r["avg_price"]
+            if isinstance(price, (int, float)) and price > 0:
+                prices.append(float(price))
+            else:
+                q_no_price += 1
+
+            tags = []
+            if r["tags"]:
+                try:
+                    tags = json.loads(r["tags"]) or []
+                except (ValueError, TypeError):
+                    tags = []
+            if tags:
+                for t in tags:
+                    tag_cnt[t] += 1
+            else:
+                q_no_tags += 1
+
+            if r["photo_count"]:
+                with_photo += 1
+            else:
+                q_no_photo += 1
+
+            if not (r["note"] or "").strip():
+                q_no_note += 1
+
+            if r["lat"] and r["lng"]:
+                regions.add((round(r["lat"], 1), round(r["lng"], 1)))
+
+            ts = _epoch_ms(r["created_at"])
+            if ts:
+                created = datetime.fromtimestamp(ts / 1000)
+                key = f"{created.year:04d}-{created.month:02d}"
+                if key in month_index:
+                    month_index[key] += 1
+                days = max(0, (now - created).days)
+                newest_days = days if newest_days is None else min(newest_days, days)
+            else:
+                days = 0
+
+            if st in ("want", "favorite"):
+                want_items.append({
+                    "id": r["id"], "name": r["name"] or "未命名",
+                    "rating": rating, "status": st, "days": days,
+                })
+
+        prices.sort()
+
+        def _median(seq: list):
+            n = len(seq)
+            if not n:
+                return 0
+            mid = n // 2
+            return seq[mid] if n % 2 else round((seq[mid - 1] + seq[mid]) / 2, 1)
+
+        price_buckets = []
+        for label, lo, hi in (("<30", 0, 30), ("30-60", 30, 60), ("60-100", 60, 100),
+                              ("100-200", 100, 200), ("≥200", 200, None)):
+            c = sum(1 for p in prices if p >= lo and (hi is None or p < hi))
+            price_buckets.append({
+                "label": label, "min": lo, "max": hi,
+                "count": c, "pct": _pct(c, len(prices)),
+            })
+
+        rating_list = [
+            {"star": s, "count": rating_dist[s], "pct": _pct(rating_dist[s], rating_n)}
+            for s in (5, 4, 3, 2, 1)
+        ]
+        tag_total = sum(tag_cnt.values())
+        tags_top = [
+            {"tag": t, "count": c, "pct": _pct(c, tag_total)}
+            for t, c in tag_cnt.most_common(8)
+        ]
+        month_list = [
+            {"key": k, "label": f"{int(k.split('-')[1])}月", "count": month_index[k]}
+            for k in months
+        ]
+        peak = max([m["count"] for m in month_list], default=0)
+        year_total = sum(m["count"] for m in month_list)
+
+        top_rated_want = sorted(
+            [w for w in want_items if w["rating"] >= 4],
+            key=lambda w: (-w["rating"], -w["days"]),
+        )[:5]
+        oldest_want = sorted(want_items, key=lambda w: -w["days"])[:5]
+
         return {
+            # —— 概览 ——
             "total": total,
-            "cities": cities,
-            "checkin": {"visited": visited, "want": want, "favorite": favorite},
-            "avgPriceAvg": avg_price_avg,
-            "topCuisines": top_cuisines,
+            "checkin": status,
+            "visitedRate": _pct(status["visited"], total),
+            "pending": status["want"] + status["favorite"],
+            "pendingHighRated": len([w for w in want_items if w["rating"] >= 4]),
+            "regions": len(regions),
+            "cities": len(regions),          # 兼容旧字段名
+            # —— 人均消费 ——
+            "avgPriceAvg": round(sum(prices) / len(prices), 1) if prices else 0,
+            "price": {
+                "count": len(prices),
+                "avg": round(sum(prices) / len(prices), 1) if prices else 0,
+                "median": _median(prices),
+                "min": int(prices[0]) if prices else 0,
+                "max": int(prices[-1]) if prices else 0,
+                "buckets": price_buckets,
+            },
+            # —— 评分 ——
+            "rating": {
+                "count": rating_n,
+                "avg": round(rating_sum / rating_n, 2) if rating_n else 0,
+                "dist": rating_list,
+            },
+            # —— 标签 ——
+            "tags": {"distinct": len(tag_cnt), "top": tags_top},
+            "topCuisines": [{"tag": t["tag"], "count": t["count"]} for t in tags_top],
+            # —— 趋势 ——
+            "months": month_list,
+            "thisMonth": month_index.get(f"{now.year:04d}-{now.month:02d}", 0),
+            "monthPeak": peak,
+            "yearTotal": year_total,
+            "perMonth": round(year_total / 12, 1),
+            "lastAddedDays": newest_days,
+            # —— 照片 ——
+            "photos": {
+                "records": with_photo,
+                "total": photo_total,
+                "pct": _pct(with_photo, total),
+            },
+            # —— 数据健康度（rating / 经纬度为 NOT NULL，不缺，故不列入）——
+            "quality": {
+                "noPrice": q_no_price, "noTags": q_no_tags,
+                "noNote": q_no_note, "noPhoto": q_no_photo,
+            },
+            # —— 行动清单 ——
+            "actions": {
+                "topRatedWant": top_rated_want,
+                "oldestWant": oldest_want,
+            },
         }

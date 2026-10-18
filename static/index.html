@@ -268,9 +268,14 @@
 
     <!-- ===== 添加 / 编辑表单模态 ===== -->
     <transition name="modal">
-      <div v-if="formOpen" class="modal-wrap" @click.self="formOpen=false">
+      <div v-if="formOpen" class="modal-wrap" :class="{picking:pickingMap}" @click.self="backdropClose">
         <div class="modal-card">
-          <div class="modal-head"><h3>{{ form.id ? '编辑美食记录' : '添加美食记录' }}</h3><button class="drawer-close" @click="formOpen=false">✕</button></div>
+          <div class="pick-bar" v-if="pickingMap">
+            <span class="pick-dot"></span>
+            <span class="pick-text">在地图上点击选择位置</span>
+            <button type="button" class="pick-cancel" @click.stop="cancelPick">取消</button>
+          </div>
+          <div class="modal-head"><h3>{{ form.id ? '编辑美食记录' : '添加美食记录' }}</h3><button class="drawer-close" @click="closeForm">✕</button></div>
           <div class="draft-bar" v-if="!form.id && draftNotice">
             <span>{{ draftNotice }}</span>
             <button type="button" class="sel-link" @click="resetFormDraft">清空重填</button>
@@ -309,20 +314,58 @@
                 <button type="button" class="btn-ghost" @click="$refs.photoInput.click()">选择照片</button>
               </label>
               <label class="field full"><span class="lbl">位置</span>
-                <div class="loc-row">
-                  <span class="loc-label">{{ locLabel }}</span>
-                  <button type="button" class="btn-ghost" @click="pickOnMap">地图点选</button>
-                  <button type="button" class="btn-ghost" @click="locateMe">定位我</button>
+                <div class="loc-box">
+                  <!-- 当前已选位置 -->
+                  <div class="loc-head" :class="{ empty: !locName }">
+                    <span class="loc-pin">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                    </span>
+                    <span class="loc-txt">
+                      <b>{{ locName || '尚未选择位置' }}</b>
+                      <small v-if="locCoord">{{ locCoord }}</small>
+                    </span>
+                    <button type="button" class="loc-clear" v-if="locName" @click="clearLocation" title="清除位置" aria-label="清除位置">✕</button>
+                    <button type="button" class="loc-act" @click="pickOnMap">地图点选</button>
+                    <button type="button" class="loc-act" @click="locateMe">定位我</button>
+                  </div>
+
+                  <!-- 地址联想输入：输入即搜，不需要回车 -->
+                  <div class="addr-box">
+                    <svg class="addr-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                    <input type="text" v-model="form.address"
+                           @input="onAddressInput" @focus="onAddressFocus" @click="onAddressFocus" @keydown="onAddrKey"
+                           placeholder="搜索地点，如 长沙南站、文和友" />
+                    <span class="addr-spin" v-if="poiLoading"></span>
+                    <button type="button" class="addr-clear" v-if="form.address" @mousedown.prevent @click="clearAddress" aria-label="清空">✕</button>
+                  </div>
+
+                  <!-- 联想结果面板 -->
+                  <div class="poi-panel" id="poiPanel" v-if="poiOpen">
+                    <button type="button" class="poi-row" v-for="(t,i) in poiList" :key="i"
+                            :class="{ active: i===poiActive }"
+                            @mouseenter="poiActive=i" @mousedown.prevent @click="pickPOI(i)">
+                      <span class="poi-ico">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                      </span>
+                      <span class="poi-main">
+                        <span class="poi-name" v-html="hl(t.name)"></span>
+                        <span class="poi-sub" v-if="poiSub(t)">{{ poiSub(t) }}</span>
+                      </span>
+                    </button>
+                    <div class="poi-empty" v-if="!poiLoading && !poiList.length">
+                      <span>{{ poiMsg || '没有找到匹配的地点' }}</span>
+                      <button type="button" class="sel-link" v-if="poiNeedKey" @click="openSettings">去设置</button>
+                    </div>
+                    <div class="poi-foot" v-if="poiList.length">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
+                  </div>
                 </div>
-                <input type="text" v-model="form.address" @change="geocode" @input="searchPOI" placeholder="或输入地址（后端地理编码）" style="margin-top:8px" />
-                <div class="poi-result" id="poiResult"></div>
                 <label class="check-line" style="margin-top:10px"><input type="checkbox" v-model="form.draft" /> 存为草稿（未完成）</label>
               </label>
             </div>
           </div>
           <div class="modal-foot">
             <span class="form-msg">{{ formMsg || (!form.id && draftSaved ? '内容已自动保存，关闭后可继续填写' : '') }}</span>
-            <button class="btn-ghost" @click="formOpen=false">{{ form.id ? '取消' : '稍后再填' }}</button>
+            <button class="btn-ghost" @click="closeForm">{{ form.id ? '取消' : '稍后再填' }}</button>
             <button class="btn-primary" @click="saveForm">保存</button>
           </div>
         </div>
@@ -332,22 +375,151 @@
     <!-- ===== 看板模态 ===== -->
     <transition name="modal">
       <div v-if="dashOpen" class="modal-wrap" @click.self="dashOpen=false">
-        <div class="modal-card">
-          <div class="modal-head"><h3>数据看板</h3><button class="drawer-close" @click="dashOpen=false">✕</button></div>
-          <div class="modal-body" v-if="dash">
-            <div class="dash-grid">
-              <div class="dash-card"><div class="big">{{ dash.total }}</div><div class="lbl">总记录</div></div>
-              <div class="dash-card"><div class="big">{{ dash.cities }}</div><div class="lbl">覆盖城市(网格)</div></div>
-              <div class="dash-card"><div class="big">{{ dash.checkin.visited }}</div><div class="lbl">去过</div></div>
-              <div class="dash-card"><div class="big">{{ dash.checkin.favorite }}</div><div class="lbl">收藏</div></div>
-              <div class="dash-card"><div class="big">¥{{ dash.avgPriceAvg }}</div><div class="lbl">人均均值</div></div>
-              <div class="dash-card"><div class="big">{{ dash.checkin.want }}</div><div class="lbl">想去</div></div>
+        <div class="modal-card dash-card">
+          <div class="modal-head">
+            <h3>数据看板</h3>
+            <span class="dash-sub" v-if="dash && dash.total">
+              覆盖 {{ dash.regions }} 个区域 · {{ dash.photos.total }} 张照片 · 最近录入 {{ dash.lastAddedDays===null||dash.lastAddedDays===undefined ? '—' : dash.lastAddedDays+' 天前' }}
+            </span>
+            <button class="drawer-close" @click="dashOpen=false">✕</button>
+          </div>
+          <div class="modal-body dash-body" v-if="dash">
+
+            <div class="dash-empty" v-if="!dash.total">
+              <p class="de-t">还没有任何记录</p>
+              <p class="de-s">添加几条美食后，这里会显示口味分布、录入趋势和待拔草清单。</p>
+              <button class="btn-primary" @click="dashOpen=false; openForm(null)">添加第一条</button>
             </div>
-            <h4 style="margin:18px 0 8px">Top 菜系</h4>
-            <ul class="dash-list">
-              <li v-for="c in dash.topCuisines" :key="c.tag">{{ c.tag }} — {{ c.count }}</li>
-              <li v-if="!dash.topCuisines || !dash.topCuisines.length">暂无</li>
-            </ul>
+
+            <template v-else>
+              <!-- 概览 -->
+              <div class="kpi-row">
+                <div class="kpi">
+                  <div class="kpi-v">{{ dash.total }}</div>
+                  <div class="kpi-l">总记录</div>
+                  <div class="kpi-s">本月新增 {{ dash.thisMonth }}</div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-v">{{ dash.checkin.visited }}</div>
+                  <div class="kpi-l">已打卡</div>
+                  <div class="kpi-s">打卡率 {{ dash.visitedRate }}%</div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-v">{{ dash.pending }}</div>
+                  <div class="kpi-l">待拔草</div>
+                  <div class="kpi-s">评分≥4 有 {{ dash.pendingHighRated }} 家</div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-v">¥{{ dash.price.median }}</div>
+                  <div class="kpi-l">人均中位数</div>
+                  <div class="kpi-s">{{ dash.price.count ? '区间 ¥'+dash.price.min+'–'+dash.price.max : '暂无数据' }}</div>
+                </div>
+              </div>
+
+              <!-- 状态构成 + 评分分布 -->
+              <div class="dash-2col">
+                <section class="dash-panel">
+                  <h4>状态构成 <small>点图例筛到列表</small></h4>
+                  <div class="stack-bar">
+                    <span class="seg s-visited" :style="{width:(dash.checkin.visited*100/dash.total)+'%'}"></span>
+                    <span class="seg s-want" :style="{width:(dash.checkin.want*100/dash.total)+'%'}"></span>
+                    <span class="seg s-fav" :style="{width:(dash.checkin.favorite*100/dash.total)+'%'}"></span>
+                  </div>
+                  <div class="legend">
+                    <button class="lg" @click="dashDrill('checkin','visited')"><i class="s-visited"></i>去过<b>{{ dash.checkin.visited }}</b></button>
+                    <button class="lg" @click="dashDrill('checkin','want')"><i class="s-want"></i>想去<b>{{ dash.checkin.want }}</b></button>
+                    <button class="lg" @click="dashDrill('checkin','favorite')"><i class="s-fav"></i>收藏<b>{{ dash.checkin.favorite }}</b></button>
+                  </div>
+                  <p class="dash-tip">近 12 个月录入 {{ dash.yearTotal }} 条，平均每月 {{ dash.perMonth }} 条；待拔草 {{ dash.pending }} 家，其中 {{ dash.pendingHighRated }} 家评分≥4。</p>
+                </section>
+
+                <section class="dash-panel">
+                  <h4>评分分布 <small>均分 {{ dash.rating.avg || '—' }}</small></h4>
+                  <div class="rate-bars">
+                    <button class="rb" v-for="d in dash.rating.dist" :key="d.star"
+                            @click="dashDrill('star', d.star)" :title="d.star+' 星 · '+d.count+' 家'">
+                      <span class="rb-n">{{ d.count }}</span>
+                      <span class="rb-col"><i :style="{height: barH(d.count, dashRatingMax)}"></i></span>
+                      <span class="rb-x">{{ d.star }}★</span>
+                    </button>
+                  </div>
+                </section>
+              </div>
+
+              <!-- 价位分布 + 高频标签 -->
+              <div class="dash-2col">
+                <section class="dash-panel">
+                  <h4>人均价位 <small>点价位段筛选</small></h4>
+                  <div class="hbar" v-for="(b,i) in dash.price.buckets" :key="b.label" @click="dashDrill('price', i)">
+                    <span class="hb-l">{{ b.label }}</span>
+                    <span class="hb-track"><i :style="{width: barH(b.count, dashPriceMax)}"></i></span>
+                    <span class="hb-n">{{ b.count }}<small v-if="b.pct"> · {{ b.pct }}%</small></span>
+                  </div>
+                  <p class="dash-tip" v-if="!dash.price.count">暂无人均消费数据</p>
+                </section>
+
+                <section class="dash-panel">
+                  <h4>高频标签 <small>点标签筛选</small></h4>
+                  <div class="hbar" v-for="t in dash.tags.top" :key="t.tag" @click="dashDrill('tag', t.tag)">
+                    <span class="hb-l hb-tag">{{ t.tag }}</span>
+                    <span class="hb-track"><i :style="{width: barH(t.count, dashTagMax)}"></i></span>
+                    <span class="hb-n">{{ t.count }}<small v-if="t.pct"> · {{ t.pct }}%</small></span>
+                  </div>
+                  <p class="dash-tip" v-if="!dash.tags.top.length">还没有给记录打标签</p>
+                </section>
+              </div>
+
+              <!-- 月度趋势 -->
+              <section class="dash-panel">
+                <h4>近 12 个月新增 <small>峰值 {{ dash.monthPeak }} 条</small></h4>
+                <div class="month-bars">
+                  <div class="mb" v-for="m in dash.months" :key="m.key" :title="m.key+' · '+m.count+' 条'">
+                    <span class="mb-n">{{ m.count || '' }}</span>
+                    <span class="mb-col"><i :class="{peak: m.count && m.count===dash.monthPeak}" :style="{height: barH(m.count, dashMonthMax)}"></i></span>
+                    <span class="mb-x">{{ m.label }}</span>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 行动清单 -->
+              <div class="dash-2col">
+                <section class="dash-panel">
+                  <h4>高分待拔草 <small>评分≥4 且还没去</small></h4>
+                  <ul class="action-list">
+                    <li v-for="a in dash.actions.topRatedWant" :key="a.id" @click="dashOpenRecord(a.id)">
+                      <span class="al-star">{{ '★'.repeat(a.rating) }}</span>
+                      <span class="al-name">{{ a.name }}</span>
+                      <span class="al-days">{{ a.days }} 天</span>
+                    </li>
+                    <li class="al-empty" v-if="!dash.actions.topRatedWant.length">暂无——想去清单里还没有 4 星以上的店</li>
+                  </ul>
+                </section>
+
+                <section class="dash-panel">
+                  <h4>积压最久 <small>想去/收藏但一直没去</small></h4>
+                  <ul class="action-list">
+                    <li v-for="a in dash.actions.oldestWant" :key="a.id" @click="dashOpenRecord(a.id)">
+                      <span class="al-star">{{ '★'.repeat(a.rating) }}{{ '☆'.repeat(5-a.rating) }}</span>
+                      <span class="al-name">{{ a.name }}</span>
+                      <span class="al-days">{{ a.days }} 天</span>
+                    </li>
+                    <li class="al-empty" v-if="!dash.actions.oldestWant.length">暂无待拔草记录</li>
+                  </ul>
+                </section>
+              </div>
+
+              <!-- 数据健康度 -->
+              <section class="dash-panel">
+                <h4>数据健康度 <small>这些字段补齐后统计更准</small></h4>
+                <div class="q-chips">
+                  <span class="q-chip" :class="{zero: !dash.quality.noPrice}">缺人均<b>{{ dash.quality.noPrice }}</b></span>
+                  <span class="q-chip" :class="{zero: !dash.quality.noTags}">无标签<b>{{ dash.quality.noTags }}</b></span>
+                  <span class="q-chip" :class="{zero: !dash.quality.noNote}">无备注<b>{{ dash.quality.noNote }}</b></span>
+                  <span class="q-chip" :class="{zero: !dash.quality.noPhoto}">无照片<b>{{ dash.quality.noPhoto }}</b></span>
+                </div>
+                <p class="dash-tip">有照片的记录 {{ dash.photos.records }} 条，占 {{ dash.photos.pct }}%；共 {{ dash.photos.total }} 张照片。</p>
+              </section>
+            </template>
           </div>
         </div>
       </div>

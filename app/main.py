@@ -339,15 +339,72 @@ def _amap_call(url: str, params: dict) -> dict:
     raise HTTPException(400, f"{hint}（{code}）" if code else hint)
 
 
+def _norm_lnglat(loc):
+    """把高德返回的 location 归一成 (lng, lat) 浮点数。
+
+    高德不同接口/不同版本返回的 location 有三种形态，前端如果直接 .split(',')
+    就会在某些接口上抛 "split is not a function"：
+      1. 字符串 "116.397,39.909"
+      2. 对象 {"lng":116.397,"lat":39.909}
+      3. 数组 [116.397, 39.909]
+    这里统一吃下三种，取不到就返回 (None, None)。
+    """
+    lng = lat = None
+    if isinstance(loc, str):
+        parts = [p for p in loc.split(",") if p.strip() != ""]
+        if len(parts) >= 2:
+            try:
+                lng, lat = float(parts[0]), float(parts[1])
+            except ValueError:
+                lng = lat = None
+    elif isinstance(loc, (list, tuple)) and len(loc) >= 2:
+        try:
+            lng, lat = float(loc[0]), float(loc[1])
+        except (TypeError, ValueError):
+            lng = lat = None
+    elif isinstance(loc, dict):
+        try:
+            lng, lat = float(loc.get("lng")), float(loc.get("lat"))
+        except (TypeError, ValueError):
+            lng = lat = None
+    if lng is None or lat is None:
+        return None, None
+    # 明显越界的脏数据直接丢弃，避免污染前端
+    if not (-180 <= lng <= 180 and -90 <= lat <= 90):
+        return None, None
+    return lng, lat
+
+
 @app.get("/api/amap/poi")
-def amap_poi(keywords: str, city: str = ""):
+def amap_poi(keywords: str, city: str = "", location: str = ""):
+    """输入提示（联想搜索）。返回已归一化的 {name, district, address, lng, lat}。"""
     key = _amap_web_key()
     if not key:
         raise HTTPException(400, "未配置高德 Web 服务 Key：POI 搜索需要「Web 服务」类型的 Key，请在「设置 → ③ 后端 Web 服务 Key」里填写")
-    return _amap_call(
-        f"{AMAP_REST}/v3/assistant/inputtips",
-        {"key": key, "keywords": keywords, "city": city},
-    )
+    params = {"key": key, "keywords": keywords, "city": city}
+    if location:
+        params["location"] = location      # 传入当前坐标时，高德会按距离排序
+    data = _amap_call(f"{AMAP_REST}/v3/assistant/inputtips", params)
+
+    tips = []
+    for t in data.get("tips") or []:
+        if not isinstance(t, dict):
+            continue
+        lng, lat = _norm_lnglat(t.get("location"))
+        if lng is None:
+            continue                        # 无坐标的提示项（如纯行政区名）对选点无用
+        name = (t.get("name") or "").strip()
+        if not name:
+            continue
+        tips.append({
+            "name": name,
+            "district": (t.get("district") or "").strip("[] "),
+            "address": (t.get("address") or "").strip("[] "),
+            "lng": lng,
+            "lat": lat,
+            "type": t.get("typecode") or "",
+        })
+    return {"ok": True, "keywords": keywords, "tips": tips}
 
 
 @app.get("/api/amap/geocode")
@@ -355,10 +412,24 @@ def amap_geocode(address: str):
     key = _amap_web_key()
     if not key:
         raise HTTPException(400, "未配置高德 Web 服务 Key：地址解析需要「Web 服务」类型的 Key，请在「设置 → ③ 后端 Web 服务 Key」里填写")
-    return _amap_call(
-        f"{AMAP_REST}/v3/geocode/geo",
-        {"key": key, "address": address},
-    )
+    data = _amap_call(f"{AMAP_REST}/v3/geocode/geo", {"key": key, "address": address})
+
+    geos = []
+    for g in data.get("geocodes") or []:
+        if not isinstance(g, dict):
+            continue
+        lng, lat = _norm_lnglat(g.get("location"))
+        if lng is None:
+            continue
+        geos.append({
+            "formatted_address": g.get("formatted_address") or address,
+            "lng": lng,
+            "lat": lat,
+            "level": g.get("level") or "",
+            "city": g.get("city") or "",
+            "district": g.get("district") or "",
+        })
+    return {"ok": True, "geocodes": geos}
 
 
 @app.get("/api/amap/route")
