@@ -10,6 +10,8 @@ def _load_or_create_key() -> bytes:
         with open(FERNET_KEY_PATH, "rb") as f:
             return f.read().strip()
     key = Fernet.generate_key()
+    # 全新目录（首次启动 / 打包后首次运行）时 data/ 还不存在，先建目录再写
+    os.makedirs(os.path.dirname(FERNET_KEY_PATH), exist_ok=True)
     # 仅本用户可读写
     with open(FERNET_KEY_PATH, "wb") as f:
         f.write(key)

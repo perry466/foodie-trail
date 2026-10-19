@@ -95,7 +95,9 @@ class SQLiteRepository(RecordRepository):
     def list(self, filters: dict, sort: list, limit: int = 0, offset: int = 0):
         sql = "SELECT * FROM records WHERE 1=1"
         args: list = []
-        if not filters.get("includeDrafts"):
+        if filters.get("draftsOnly"):
+            sql += " AND (draft=1)"
+        elif not filters.get("includeDrafts"):
             sql += " AND (draft=0)"
         if filters.get("keyword"):
             kw = f"%{filters['keyword']}%"

@@ -26,12 +26,25 @@ const DRAFT_KEY = 'fm-form-draft-v1';   // 添加表单的本地草稿（未提�
 /* ---------------- 地图适配 ---------------- */
 const MapView = {
   impl:null, map:null, cluster:null, _plain:null, _records:[], _drawing:false, _dt:null,
+  /* 销毁当前地图实例：切换地图实现（Leaflet ↔ 高德）或重设 Key 时必须先清场，
+     否则旧实例的 DOM、事件监听、InfoWindow 会残留，出现叠加或点击错乱 */
+  destroy(){
+    try{ if(this.map && this.impl==='amap' && typeof this.map.destroy==='function') this.map.destroy(); }catch(e){}
+    try{ if(this.map && this.impl==='leaflet' && typeof this.map.remove==='function') this.map.remove(); }catch(e){}
+    try{ if(this._iw && this._iw.close) this._iw.close(); }catch(e){}
+    try{ if(this._cw && this._cw.close) this._cw.close(); }catch(e){}
+    this.impl=null; this.map=null; this.cluster=null; this._plain=null; this._records=[];
+    this._iw=null; this._cw=null; this._drawing=false; this._dt=null;
+    const el=document.getElementById('map');
+    if(el) el.innerHTML='';       // Leaflet 会往容器塞 DOM，直接清空最保险
+  },
   async init(){
+    this.destroy();
     const cfg = await API.get('/api/config/amap');
     this.cfg = cfg;
     if(cfg.configured && cfg.key) await this.initAMap(cfg);
     else await this.initLeaflet();
-    this.render(window.__APP__ ? window.__APP__.records : []);
+    this.render(window.__APP__ ? window.__APP__.records.slice() : []);
   },
   async initAMap(cfg){
     if($('#mapBanner')) $('#mapBanner').remove();
@@ -292,7 +305,7 @@ const App = {
       confirmBox:{ open:false, title:'', message:'', ok:'确认', danger:false, busy:false, onlyOk:false },
       records:[], page:1, pageSize:100, listTotal:0,
       selectMode:false, selectedIds:[],
-      filters:{ keyword:'', sort:'updatedAt:desc', tags:[], rating:0, checkin:'', viewOnly:false, priceMin:null, priceMax:null },
+      filters:{ keyword:'', sort:'updatedAt:desc', tags:[], rating:0, checkin:'', viewOnly:false, priceMin:null, priceMax:null, drafts:'all' },
       viewBounds:null,
       allTags:[],
       detail:null,
@@ -308,17 +321,25 @@ const App = {
       pickMode:false, pickCb:null, pickingMap:false, _pickedAt:0,
       mapConfig:{ configured:false },
       draftNotice:'', draftSaved:false, _suppressDraft:false,
+      /* 内部状态：下划线开头，Vue 3 不会代理到实例，只能在 JS 方法里用 this._xxx 访问，
+         严禁出现在模板表达式中（生产版会抛 ReferenceError，整个组件渲染失败） */
       _mapSeq:0, _mmT:null, _poiSeq:0,
+      /* 保存中标志：模板要用（禁用按钮 + 文案切换），所以必须用普通名字 */
+      saving:false,
     };
   },
   computed:{
+    /* 按草稿可见范围过滤后的记录（分页与计数都基于它） */
+    visibleRecords(){ return this._visible(this.records); },
+    draftCount(){ return this.records.filter(r=>r.draft).length; },
     pagedRecords(){
       const size=this.pageSize||100;
-      const pages=Math.max(1,Math.ceil(this.records.length/size));
+      const list=this.visibleRecords;
+      const pages=Math.max(1,Math.ceil(list.length/size));
       const p=Math.min(Math.max(1,this.page),pages);
-      return this.records.slice((p-1)*size,p*size);
+      return list.slice((p-1)*size,p*size);
     },
-    pages(){ const size=this.pageSize||100; return Math.max(1,Math.ceil(this.records.length/size)); },
+    pages(){ const size=this.pageSize||100; return Math.max(1,Math.ceil(this.visibleRecords.length/size)); },
     /* 看板图表用的最大值（决定柱子相对高度） */
     dashRatingMax(){ return this.dash ? Math.max(1, ...this.dash.rating.dist.map(d=>d.count)) : 1; },
     dashPriceMax(){ return this.dash ? Math.max(1, ...this.dash.price.buckets.map(b=>b.count)) : 1; },
@@ -402,14 +423,16 @@ const App = {
     /* 数据加载 */
     async loadRecords(){
       const f=this.filters;
-      let url=`/api/records?${this._filterQuery()}`;
+      // 列表始终把草稿取回来（否则勾选"存为草稿"的记录会从列表和地图上彻底消失），
+      // 再由前端按 filters.drafts 决定显示范围
+      let url=`/api/records?${this._filterQuery(true)}`;
       if(f.viewOnly && this.viewBounds){ const b=this.viewBounds; url+=`&swLng=${b.swLng}&swLat=${b.swLat}&neLng=${b.neLng}&neLat=${b.neLat}`; }
       try{
         const recs=await API.get(url);
-        this.records=recs; this.listTotal=recs.length; this.page=1;
+        this.records=recs; this.listTotal=this._visible(recs).length; this.page=1;
         // 清除已不存在于当前结果里的选中项（如被筛掉或已删除），避免误删
         if(this.selectedIds.length){
-          const alive=new Set(recs.map(r=>r.id));
+          const alive=new Set(this._visible(recs).map(r=>r.id));
           this.selectedIds=this.selectedIds.filter(id=>alive.has(id));
         }
         const cnt={}; recs.forEach(r=>(r.tags||[]).forEach(t=>cnt[t]=(cnt[t]||0)+1));
@@ -419,15 +442,26 @@ const App = {
     },
     onSearch(){ clearTimeout(this._st); this._st=setTimeout(()=>this.loadRecords(),250); },
     goto(p){ this.page=p; },
-    /* 筛选条件拼成查询串（列表与地图共用） */
-    _filterQuery(){
+    /* 筛选条件拼成查询串（列表与地图共用）
+       withDrafts=true 时把草稿一并取回（列表用）；
+       draftsOnly=true 时只取草稿（地图在"仅草稿"下必须与列表同范围，否则会混入非草稿） */
+    _filterQuery(withDrafts, draftsOnly){
       const f=this.filters;
       let q=`keyword=${encodeURIComponent(f.keyword)}&sort=${f.sort}&checkinStatus=${f.checkin}`;
       if(f.rating) q+=`&ratingMin=${f.rating}&ratingMax=${f.rating}`;
       if(f.tags.length) q+=`&tags=${encodeURIComponent(f.tags.join(','))}`;
       if(f.priceMin!=null) q+=`&avgPriceMin=${f.priceMin}`;
       if(f.priceMax!=null) q+=`&avgPriceMax=${f.priceMax}`;
+      if(draftsOnly) q+='&includeDrafts=1&draftsOnly=1';
+      else if(withDrafts) q+='&includeDrafts=1';
       return q;
+    },
+    /* 草稿可见范围：all 全部 / hide 不含 / only 仅草稿 */
+    _visible(list){
+      const ds=this.filters.drafts;
+      if(ds==='hide') return list.filter(r=>!r.draft);
+      if(ds==='only') return list.filter(r=>r.draft);
+      return list;
     },
     /* 地图按当前可视区+上限取数并渲染（根治大规模卡顿） */
     async reloadMap(){
@@ -435,7 +469,9 @@ const App = {
       if(!this.showMarkers){ MapView.render([]); return; }
       const seq = ++this._mapSeq;
       const b = MapView.getBounds();
-      const url = `/api/records?${this._filterQuery()}&swLng=${b.swLng}&swLat=${b.swLat}&neLng=${b.neLng}&neLat=${b.neLat}&limit=${MAP_LIMIT}`;
+      // 地图与列表使用同一草稿范围：含草稿=全取 / 仅草稿=只取草稿 / 不含草稿=后端默认排除
+      const ds = this.filters.drafts;
+      const url = `/api/records?${this._filterQuery(ds!=='hide', ds==='only')}&swLng=${b.swLng}&swLat=${b.swLat}&neLng=${b.neLng}&neLat=${b.neLat}&limit=${MAP_LIMIT}`;
       try{
         const recs = await API.get(url);
         if(seq !== this._mapSeq) return;            // 已有更新的请求，丢弃过期结果
@@ -485,12 +521,12 @@ const App = {
       const i=this.selectedIds.indexOf(id);
       if(i>=0) this.selectedIds.splice(i,1); else this.selectedIds.push(id);
     },
-    /* 全选：作用于当前筛选后的全部结果（不限于当前页） */
-    selectAll(){ this.selectedIds=this.records.map(r=>r.id); },
+    /* 全选：作用于当前筛选后的全部结果（不限于当前页；也不含被草稿筛选隐藏的记录） */
+    selectAll(){ this.selectedIds=this.visibleRecords.map(r=>r.id); },
     /* 反选：当前结果集中未选中的变为选中，已选中的取消 */
     invertSelect(){
       const sel=new Set(this.selectedIds);
-      this.selectedIds=this.records.filter(r=>!sel.has(r.id)).map(r=>r.id);
+      this.selectedIds=this.visibleRecords.filter(r=>!sel.has(r.id)).map(r=>r.id);
     },
     clearSelect(){ this.selectedIds=[]; },
     async batchDelete(){
@@ -522,8 +558,13 @@ const App = {
     setStar(n){ this.filters.rating=n; this.loadRecords(); },
     toggleTag(t){ const i=this.filters.tags.indexOf(t); if(i>=0)this.filters.tags.splice(i,1); else this.filters.tags.push(t); this.loadRecords(); },
     setCheckin(c){ this.filters.checkin=c; this.loadRecords(); },
+    setDrafts(v){
+      if(this.filters.drafts===v) return;
+      this.filters.drafts=v; this.page=1; this.listTotal=this.visibleRecords.length;
+      this.reloadMap();          // 草稿范围变了，地图立即按同一范围重取，不必等拖动地图
+    },
     onViewOnly(e){ this.filters.viewOnly=e.target.checked; if(this.filters.viewOnly) this.viewBounds=MapView.getBounds(); else this.viewBounds=null; this.loadRecords(); },
-    resetFilter(){ this.filters={keyword:'',sort:'updatedAt:desc',tags:[],rating:0,checkin:'',viewOnly:false,priceMin:null,priceMax:null}; this.viewBounds=null; this.loadRecords(); },
+    resetFilter(){ this.filters={keyword:'',sort:'updatedAt:desc',tags:[],rating:0,checkin:'',viewOnly:false,priceMin:null,priceMax:null,drafts:'all'}; this.viewBounds=null; this.loadRecords(); },
 
     /* 看板：加载 + 图表下钻（点图表即筛到列表） */
     async openDash(){
@@ -554,18 +595,27 @@ const App = {
         const cfg=await API.get('/api/config/amap');
         this.mapConfig=cfg; this.settings.realKey=cfg.key;
         this.settings.key=cfg.configured?this.maskKey(cfg.key):'';
-        this.settings.security=''; this.settings.webKey=''; this.settings.connMsg='';
+        // 已存的安全密钥用掩码回显；用户不改动则原样回传，避免"只改 Web Key 却把 securityJsCode 抹掉"
+        this.settings.security=cfg.security?this.maskKey(cfg.security):'';
+        this.settings.webKey=''; this.settings.connMsg='';
         this.settingsOpen=true;
       }catch(e){ toast('设置加载失败：'+e.message); }
     },
     maskKey(k){ if(!k) return ''; return '••••••'+k.slice(-4); },
     async saveKey(){
-      let key=this.settings.key.trim(); const sec=this.settings.security.trim(); const web=this.settings.webKey.trim();
+      let key=this.settings.key.trim(); let sec=this.settings.security.trim(); const web=this.settings.webKey.trim();
       if(this.mapConfig.configured && key===this.maskKey(this.settings.realKey)) key=this.settings.realKey;
+      if(this.mapConfig.security && sec===this.maskKey(this.mapConfig.security)) sec=this.mapConfig.security;
       if(!key){ toast('请输入 JS API Key'); return; }
+      // security 留空表示"保持原值"，后端不再删除已有安全密钥；清除走单独的明确操作
       const body={key,security:sec||null};
       if(web) body.web_key=web;
-      try{ await API.sendForm('/api/settings/amap','PUT',body); toast('已保存（加密存储）'); await MapView.init(); await this.loadRecords(); }
+      try{
+        await API.sendForm('/api/settings/amap','PUT',body);
+        toast('已保存，正在重新加载地图');
+        // 换 Key 必须重建高德脚本与地图实例，整页刷新最干净（MapView.init 只清实例，清不掉已加载的 AMap）
+        setTimeout(()=>location.reload(), 500);
+      }
       catch(e){ toast('保存失败：'+e.message); }
     },
     async testConn(){
@@ -573,7 +623,23 @@ const App = {
       catch(e){ this.settings.connMsg='❌ '+e.message; }
     },
     async clearKey(){
-      try{ await API.del('/api/settings/amap'); toast('已清除'); await this.openSettings(); await MapView.init(); await this.loadRecords(); }
+      const ok=await this.askConfirm({
+        title:'清除全部高德 Key？',
+        message:'JS API Key、安全密钥与 Web 服务 Key 都会被删除，地图与地址搜索随即不可用，需要重新填写。',
+        ok:'全部清除', danger:true,
+      });
+      if(!ok) return;
+      try{ await API.del('/api/settings/amap'); toast('已清除，正在重新加载地图'); setTimeout(()=>location.reload(), 500); }
+      catch(e){ toast('清除失败：'+e.message); }
+    },
+    async clearSecurity(){
+      const ok=await this.askConfirm({
+        title:'清除安全密钥？',
+        message:'只删除 securityJsCode，JS API Key 与 Web 服务 Key 保持不变。',
+        ok:'清除安全密钥', danger:true,
+      });
+      if(!ok) return;
+      try{ await API.del('/api/settings/amap/security'); toast('已清除安全密钥，正在重新加载地图'); setTimeout(()=>location.reload(), 500); }
       catch(e){ toast('清除失败：'+e.message); }
     },
 
@@ -850,6 +916,7 @@ const App = {
       });
     },
     async saveForm(){
+      if(this.saving) return;                     // 防重复提交：连点两次不会再建一条重复记录
       const name=this.form.name.trim();
       if(!name){ this.formMsg='店名必填'; return; }
       if((this.formPhotos.length+this.formNewPhotos.length)>9){ this.formMsg='照片最多 9 张'; return; }
@@ -860,15 +927,42 @@ const App = {
         avgPrice:this.form.price?+this.form.price:null,
         checkinStatus:this.form.checkin||null, note:this.form.note.trim()||null, draft:this.form.draft,
       };
+      this.saving=true;
+      this.formMsg='';
       try{
         let rec;
         if(this.form.id) rec=await API.sendForm('/api/records/'+this.form.id,'PUT',body);
-        else rec=await API.sendForm('/api/records','POST',body);
-        for(const f of this.formNewPhotos) await API.upload('/api/records/'+rec.id+'/photos',f);
-        for(const pid of this.formRemoved) await API.del('/api/photos/'+pid);
+        else{
+          rec=await API.sendForm('/api/records','POST',body);
+          // 立刻回填 id：记录已落库，之后任何重试都会走更新而不是新建，
+          // 避免"照片上传失败→用户再点保存→产生重复记录"
+          this.form.id=rec.id;
+        }
+        // 照片逐张上传/删除，失败的不丢弃，留在列表里等用户重试
+        const failed=[];
+        for(const f of this.formNewPhotos){
+          try{ await API.upload('/api/records/'+rec.id+'/photos',f); }
+          catch(e){ failed.push(f); }
+        }
+        this.formNewPhotos=failed;
+        const delFailed=[];
+        for(const pid of this.formRemoved){
+          try{ await API.del('/api/photos/'+pid); }
+          catch(e){ delFailed.push(pid); }   // 删除失败要保留，否则照片仍留在库里、下次打开又冒出来
+        }
+        this.formRemoved=delFailed;
+        if(failed.length||delFailed.length){
+          const parts=[];
+          if(failed.length) parts.push(`${failed.length} 张照片上传失败`);
+          if(delFailed.length) parts.push(`${delFailed.length} 张照片删除失败`);
+          this.formMsg=`记录已保存，但有 ${parts.join('、')}，可再点保存重试`;
+          await this.loadRecords();
+          return;                                   // 保留表单与未完成项，便于重试
+        }
         toast('已保存'); this.clearDraft(); this.formOpen=false; await this.loadRecords();
         if(this.detailOpen && this.detail && this.detail.id===rec.id) this.detail=rec;
       }catch(e){ this.formMsg='保存失败：'+e.message; }
+      finally{ this.saving=false; }
     },
 
     /* 导入 / 导出 */
@@ -896,10 +990,8 @@ const App = {
     },
     doExport(){
       this.moreOpen=false;
-      const f=this.filters; let url=`/api/export?mode=full&keyword=${encodeURIComponent(f.keyword)}&checkinStatus=${f.checkin}`;
-      if(f.rating) url+=`&ratingMin=${f.rating}&ratingMax=${f.rating}`;
-      if(f.tags.length) url+=`&tags=${encodeURIComponent(f.tags.join(','))}`;
-      window.location.href=url;
+      // 备份始终包含草稿：草稿同样是用户数据，静默遗漏会让恢复后的数据不完整
+      window.location.href=`/api/export?mode=full&includeDrafts=1&${this._filterQuery(false)}`;
     },
 
     /* lightbox 桥接 */

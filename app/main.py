@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import os
+import re
 import time
 import uuid
 from typing import Optional
@@ -27,11 +28,31 @@ from .repository import SQLiteRepository
 app = FastAPI(title="FoodMap", version="1.0.0")
 repo = SQLiteRepository()
 
+# 本服务只服务自身页面，任何外部站点都不得跨站读写数据。
+# 原先 allow_origins=["*"] 意味着用户浏览任意网页时，该页面的脚本都能改记录、
+# 删数据、导出照片、读取地图 Key。这里收紧到本机来源。
+LOCAL_ORIGIN_RE = re.compile(r"^http://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origin_regex=LOCAL_ORIGIN_RE.pattern,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _guard_origin(request, call_next):
+    """拦截跨站请求：浏览器跨站时会带上 Origin，非本机来源一律拒绝。
+
+    仅靠 CORS 响应头不够——请求本身仍可能到达服务端并被执行（删除类请求尤其致命），
+    所以这里直接在入口处拒绝。无 Origin 的请求（命令行、curl、同源导航）放行。
+    """
+    origin = request.headers.get("origin")
+    if origin and not LOCAL_ORIGIN_RE.match(origin):
+        return JSONResponse({"detail": "拒绝跨站访问"}, status_code=403)
+    return await call_next(request)
 
 init_db()
 
@@ -119,6 +140,7 @@ def list_records(
     keyword: str = "", ratingMin: int = None, ratingMax: int = None,
     avgPriceMin: int = None, avgPriceMax: int = None,
     checkinStatus: str = "", tags: str = "", includeDrafts: bool = False,
+    draftsOnly: bool = False,
     swLng: float = None, swLat: float = None, neLng: float = None, neLat: float = None,
     sort: str = "updatedAt:desc", limit: int = 0, offset: int = 0,
 ):
@@ -126,6 +148,7 @@ def list_records(
         "keyword": keyword, "ratingMin": ratingMin, "ratingMax": ratingMax,
         "avgPriceMin": avgPriceMin, "avgPriceMax": avgPriceMax,
         "checkinStatus": checkinStatus, "includeDrafts": includeDrafts,
+        "draftsOnly": draftsOnly,
     }
     if tags:
         filters["tags"] = [t for t in tags.split(",") if t]
@@ -265,13 +288,21 @@ def config_amap():
 @app.put("/api/settings/amap")
 def set_amap(body: AmapKeyIn):
     repo.set_setting("amap_key", crypto.encrypt(body.key))
-    if body.security:
-        repo.set_setting("amap_security", crypto.encrypt(body.security))
-    else:
-        repo.delete_setting("amap_security")
+    # 安全密钥：None 或空串表示"保持原值"。
+    # 前端只改 Web 服务 Key 时不会再传 security，这里若按空值删除，
+    # 会导致高德地图随后报 INVALID_USER_SCODE；清除必须走 DELETE /api/settings/amap/security。
+    if body.security and body.security.strip():
+        repo.set_setting("amap_security", crypto.encrypt(body.security.strip()))
     # Web 服务 Key：非空则存；不传（None）或空串则保持不变
     if body.web_key:
         repo.set_setting("amap_web_key", crypto.encrypt(body.web_key))
+    return {"ok": True}
+
+
+@app.delete("/api/settings/amap/security")
+def clear_amap_security():
+    """只清除安全密钥，保留 JS Key 与 Web 服务 Key。"""
+    repo.delete_setting("amap_security")
     return {"ok": True}
 
 
@@ -528,9 +559,10 @@ def export_records(
     mode: str = "full",
     keyword: str = "", ratingMin: int = None, ratingMax: int = None,
     avgPriceMin: int = None, avgPriceMax: int = None,
-    checkinStatus: str = "", tags: str = "", includeDrafts: bool = False,
+    checkinStatus: str = "", tags: str = "", includeDrafts: bool = True,
     sort: str = "updatedAt:desc",
 ):
+    """导出备份。includeDrafts 默认为 True：草稿也是用户数据，备份不应静默遗漏。"""
     filters = {
         "keyword": keyword, "ratingMin": ratingMin, "ratingMax": ratingMax,
         "avgPriceMin": avgPriceMin, "avgPriceMax": avgPriceMax,

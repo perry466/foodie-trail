@@ -4,7 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>美食地图 FoodMap</title>
-  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="alternate icon" href="/favicon.ico" sizes="any" />
+  <script src="/lib/vue/vue.global.min.js"></script>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
@@ -56,7 +58,7 @@
           </button>
           <button class="more-item" @click="doExport">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            导出备份
+            导出备份（含草稿）
           </button>
           <span class="more-divider"></span>
           <button class="more-item more-item--danger" @click="enterSelect">
@@ -165,6 +167,14 @@
             </div>
             <label class="check-line"><input type="checkbox" v-model="filters.viewOnly" @change="onViewOnly" /> 仅看视野内</label>
           </section>
+          <section class="fsec">
+            <div class="fsec-title">草稿</div>
+            <div class="chips-row">
+              <button class="pill" :class="{on: filters.drafts==='all'}" @click="setDrafts('all')">含草稿<span class="pill-n" v-if="draftCount">{{ draftCount }}</span></button>
+              <button class="pill" :class="{on: filters.drafts==='hide'}" @click="setDrafts('hide')">不含草稿</button>
+              <button class="pill" :class="{on: filters.drafts==='only'}" @click="setDrafts('only')">仅草稿</button>
+            </div>
+          </section>
         </div>
         <div class="drawer-foot">
           <span class="drawer-count">{{ listTotal }} 条结果</span>
@@ -203,7 +213,7 @@
 
     <!-- ===== 应用内确认弹窗（替代浏览器 confirm） ===== -->
     <transition name="modal">
-      <div v-if="confirmBox.open" class="modal-wrap" @click.self="closeConfirm(false)">
+      <div v-if="confirmBox.open" class="modal-wrap confirm-wrap" @click.self="closeConfirm(false)">
         <div class="modal-card confirm-card" role="dialog" aria-modal="true">
           <div class="confirm-body">
             <div class="confirm-icon" :class="{ danger: confirmBox.danger }">
@@ -237,8 +247,9 @@
             <div class="settings-group">
               <div class="sg-title">① 前端地图（JS API）</div>
               <p class="hint">服务平台选「Web端(JS API)」，用于浏览器显示地图、打点、聚合。</p>
-              <label class="field"><span class="lbl">JS API Key</span><input type="text" v-model="settings.key" placeholder="高德开放平台申请的 JS API Key" /></label>
-              <label class="field"><span class="lbl">安全密钥 securityJsCode</span><input type="text" v-model="settings.security" placeholder="JS API 2.0 需要，可选" /></label>
+              <label class="field"><span class="lbl">JS API Key</span><input type="text" v-model="settings.key" placeholder="高德开放平台申请的 JS API Key" @focus="$event.target.select()" /></label>
+              <label class="field"><span class="lbl">安全密钥 securityJsCode</span><input type="text" v-model="settings.security" placeholder="留空=保持原有；已设置时以掩码回显" @focus="$event.target.select()" /></label>
+              <button v-if="mapConfig.security" type="button" class="mini-link" @click="clearSecurity">清除已存的安全密钥</button>
             </div>
             <div class="settings-group">
               <div class="sg-title">② 后端代理（Web 服务）</div>
@@ -257,7 +268,7 @@
             </div>
             <div class="row" style="display:flex; gap:10px">
               <button class="btn-ghost" @click="testConn">测试 Web 服务 Key</button>
-              <button class="btn-ghost" @click="clearKey">清除</button>
+              <button class="btn-ghost" @click="clearKey">全部清除</button>
               <button class="btn-primary" style="margin-left:auto" @click="saveKey">保存</button>
             </div>
             <div class="form-msg" style="margin-top:10px">{{ settings.connMsg }}</div>
@@ -366,7 +377,7 @@
           <div class="modal-foot">
             <span class="form-msg">{{ formMsg || (!form.id && draftSaved ? '内容已自动保存，关闭后可继续填写' : '') }}</span>
             <button class="btn-ghost" @click="closeForm">{{ form.id ? '取消' : '稍后再填' }}</button>
-            <button class="btn-primary" @click="saveForm">保存</button>
+            <button class="btn-primary" :disabled="saving" @click="saveForm">{{ saving ? '保存中…' : '保存' }}</button>
           </div>
         </div>
       </div>

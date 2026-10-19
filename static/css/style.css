@@ -199,6 +199,10 @@ button{ font-family:inherit; cursor:pointer; }
 }
 .pill:hover{ border-color:var(--primary); color:var(--text); }
 .pill.on{ background:#1f2329; color:#fff; border-color:#1f2329; }
+/* 草稿数量角标 */
+.pill-n{ display:inline-block; margin-left:5px; padding:0 5px; border-radius:999px; background:rgba(15,23,42,.1); color:inherit; font-size:11px; line-height:15px; }
+.pill.on .pill-n{ background:rgba(255,255,255,.24); }
+[data-theme="dark"] .pill.on .pill-n{ background:rgba(0,0,0,.14); }
 [data-theme="dark"] .pill{ background:rgba(255,255,255,.06); color:var(--muted); }
 [data-theme="dark"] .pill.on{ background:#e8eaed; color:#16181d; border-color:#e8eaed; }
 .check-line{ display:flex; align-items:center; gap:8px; margin-top:16px; font-size:13px; color:var(--muted); }
@@ -237,6 +241,8 @@ button{ font-family:inherit; cursor:pointer; }
 .pick-cancel:hover{ border-color:var(--primary); color:var(--primary); }
 
 /* 应用内确认弹窗（替代浏览器原生 confirm） */
+/* 需高于其它 modal-wrap（2000），否则从设置/表单里弹出的确认框会被压在下面 */
+.confirm-wrap{ z-index:2150; }
 .confirm-card{ max-width:400px; }
 .confirm-body{ padding:26px 24px 18px; text-align:center; }
 .confirm-icon{
@@ -421,6 +427,9 @@ button{ font-family:inherit; cursor:pointer; }
 .settings-group{ border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:16px; background:rgba(15,23,42,.02); }
 .settings-group .sg-title{ font-weight:700; font-size:14px; color:var(--primary); margin-bottom:4px; }
 .settings-group .hint{ margin-bottom:10px; }
+/* 设置面板内的次要操作（如仅清除安全密钥） */
+.mini-link{ border:none; background:none; padding:2px 0 0; font-size:12px; color:var(--muted); cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+.mini-link:hover{ color:var(--primary); }
 .switch-row{ display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .switch-name{ font-weight:600; font-size:14px; color:var(--text); }
 .switch{
