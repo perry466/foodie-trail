@@ -5,7 +5,9 @@ import socket
 
 # 项目根目录：taste-map/（即仓库根目录，app/ 的上级）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# 数据目录：默认 <仓库>/data；设置 FOODMAP_DATA_DIR 可改到别处。
+# 用途：便携部署（数据放 U 盘/用户目录）、自动化测试隔离（tests/ 用临时目录，不碰真实数据）。
+DATA_DIR = os.path.abspath(os.environ.get("FOODMAP_DATA_DIR") or os.path.join(BASE_DIR, "data"))
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 DB_PATH = os.path.join(DATA_DIR, "foodmap.db")
 FERNET_KEY_PATH = os.path.join(DATA_DIR, ".fernet.key")

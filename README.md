@@ -55,6 +55,7 @@ foodie-trail/
 ├── requirements.txt      # Python 依赖清单
 ├── start.bat / start.sh  # 启动脚本（等价于 python -m app.main）
 ├── seed_1000.py          # 演示数据生成脚本（可选，固定随机种子可复现）
+├── tests/                # 回归测试（pytest + Node 断言，含手工验证说明）
 ├── UPLOAD_RULES.md       # 仓库上传规范（隐私与忽略规则）
 └── README.md             # 本文档
 ```
@@ -82,6 +83,18 @@ foodie-trail/
    应用启动后会在 `20000–65535` 区间内探测一个空闲端口，端口号写入 `data/.last_port` 并打印于启动日志。浏览器打开该地址即可使用。
 
    说明：因后端使用包内相对导入，必须以 `python -m app.main` 方式从项目根目录启动，不可直接执行 `python app/main.py`。
+
+## 测试
+
+回归测试覆盖草稿范围、备份导出、密钥保存与照片删除四类行为，运行时不读写 `data/`（测试使用临时数据目录）。
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q      # 后端 9 个用例
+node tests/front-check.js      # 前端 15 项断言（需 Node 18+）
+```
+
+Windows 下可直接运行 `tests\run-tests.bat`，一条命令跑完两条线：退出码 0 为全部通过，1 为有失败，2 为缺少 Node 导致前端检查被跳过（此时会明确提示，不会误报通过）。手工验证步骤见 `tests/README.md`。
 
 ## 配置高德地图（可选）
 
