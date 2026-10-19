@@ -1,5 +1,5 @@
 """数据访问层：RecordRepository 抽象 + SQLiteRepository 实现
-预留 PostgresRepository（DB_TYPE 切换），见需求文档 C-8。
+预留 PostgresRepository（DB_TYPE 切换）。
 """
 import json
 from abc import ABC, abstractmethod

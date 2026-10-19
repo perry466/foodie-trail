@@ -15,7 +15,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 DB_VERSION = 1
 
-# 照片压缩参数（来自需求文档 FR-6.2 / 第10节假设）
+# 照片压缩参数：长边上限、JPEG 质量、单张字节上限、单条记录张数上限（经验取值，可按需调整）
 PHOTO_MAX_EDGE = 1280
 PHOTO_QUALITY = 82
 PHOTO_MAX_BYTES = 500 * 1024
