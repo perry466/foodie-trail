@@ -8,9 +8,55 @@ from datetime import datetime
 from typing import Optional
 
 from .db import get_conn
+from .validate import MAX_TS_MS, MIN_TS_MS, normalize_price, normalize_tags
 
 # SQLite 单条 SQL 的参数上限默认 999，批量 IN 操作按 400 分批
 _CHUNK_SIZE = 400
+
+# 排序白名单：字段 -> 列名，方向 -> 只允许 asc/desc。
+# ORDER BY 的列名和方向无法参数化，必须靠白名单，否则 sort 参数就是注入点。
+# 同时接受 camelCase（API 入参）与 snake_case（列名，供 normalize_sort 结果幂等传入）。
+_SORT_COLUMNS = {
+    "updatedAt": "updated_at",
+    "createdAt": "created_at",
+    "rating": "rating",
+    "name": "name",
+    "avgPrice": "avg_price",
+    "updated_at": "updated_at",
+    "created_at": "created_at",
+    "avg_price": "avg_price",
+}
+_SORT_DIRS = ("asc", "desc")
+DEFAULT_SORT = [("updated_at", "desc")]
+
+
+def normalize_sort(sort) -> list:
+    """把外部传入的排序条件白名单化，返回可直接拼进 SQL 的 [(列名, asc|desc)]。
+
+    接受字符串（"rating:asc,updatedAt:desc"）或 [("rating", "asc")] 形式；
+    未知字段、非法方向一律丢弃；全部非法时回落到 updated_at desc。
+    返回值只可能包含 _SORT_COLUMNS 的列名和 asc/desc，用户输入不会进入 SQL。
+    """
+    if isinstance(sort, str):
+        parts = [p for p in sort.split(",") if p.strip()]
+    elif isinstance(sort, (list, tuple)):
+        parts = list(sort)
+    else:
+        parts = []
+    items = []
+    for part in parts:
+        if isinstance(part, str):
+            field, _, direction = part.partition(":")
+        elif isinstance(part, (list, tuple)) and len(part) == 2:
+            field, direction = part
+        else:
+            continue
+        col = _SORT_COLUMNS.get(str(field or "").strip())
+        d = str(direction or "desc").strip().lower()
+        if col is None or d not in _SORT_DIRS:
+            continue
+        items.append((col, d))
+    return items or list(DEFAULT_SORT)
 
 
 def _pct(part: int, whole: int) -> float:
@@ -19,19 +65,24 @@ def _pct(part: int, whole: int) -> float:
 
 
 def _epoch_ms(value) -> int:
-    """created_at 统一为毫秒时间戳；兼容历史数据里可能存在的字符串写法。"""
-    if isinstance(value, (int, float)) and value > 0:
-        return int(value)
+    """created_at 统一为毫秒时间戳；兼容历史数据里可能存在的字符串写法。
+
+    超出 2000–2100 的值一律当 0（未知），否则后面的 datetime.fromtimestamp
+    会抛 ValueError/OverflowError，把整个看板打成 500。
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        ms = int(value)
+        return ms if MIN_TS_MS <= ms <= MAX_TS_MS else 0
     if isinstance(value, str):
         txt = value.strip().replace("Z", "+00:00")
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
             try:
-                return int(datetime.strptime(txt[:19], fmt).timestamp() * 1000)
-            except ValueError:
+                return _epoch_ms(int(datetime.strptime(txt[:19], fmt).timestamp() * 1000))
+            except (ValueError, OverflowError, OSError):
                 continue
         try:
-            return int(datetime.fromisoformat(txt).timestamp() * 1000)
-        except ValueError:
+            return _epoch_ms(int(datetime.fromisoformat(txt).timestamp() * 1000))
+        except (ValueError, OverflowError, OSError):
             return 0
     return 0
 
@@ -42,15 +93,21 @@ def _chunks(seq, size: int = _CHUNK_SIZE):
 
 
 def _row_to_record(row, with_photos: bool = False) -> dict:
+    # 读取侧也做一次归一化：历史数据/被手工改过的库里可能存在字符串或对象形态的 tags，
+    # 前端 `tags.forEach` 会直接抛错导致整个列表加载失败，这里兜住。
+    try:
+        raw_tags = json.loads(row["tags"]) if row["tags"] else []
+    except (TypeError, ValueError):
+        raw_tags = []
     rec = {
         "id": row["id"],
         "name": row["name"],
         "lng": row["lng"],
         "lat": row["lat"],
         "rating": row["rating"],
-        "tags": json.loads(row["tags"]) if row["tags"] else [],
+        "tags": normalize_tags(raw_tags),
         "businessHours": row["business_hours"],
-        "avgPrice": row["avg_price"],
+        "avgPrice": normalize_price(row["avg_price"]),
         "checkinStatus": row["checkin_status"],
         "note": row["note"],
         "draft": bool(row["draft"]),
@@ -59,6 +116,12 @@ def _row_to_record(row, with_photos: bool = False) -> dict:
     }
     if with_photos:
         rec["photos"] = _photos_for(row["id"])
+    # 列表接口不返回全部照片，只带一张封面 id，供缩略图使用
+    try:
+        if row["cover_id"]:
+            rec["cover"] = row["cover_id"]
+    except (IndexError, KeyError):
+        pass
     return rec
 
 
@@ -90,10 +153,24 @@ class RecordRepository(ABC):
     @abstractmethod
     def photo_paths(self, ids: list) -> list: ...
 
+    def replace_photos(self, rid: str, photos: list) -> list:
+        """用 photos 整体替换某条记录的照片，返回被替换掉的旧照片（供调用方删文件）。
+
+        必须在单个事务里完成：要么全部换成新集合，要么保持原样，
+        避免「旧照片已删、新照片没写进去」的中间态。
+        """
+        raise NotImplementedError
+
+    def photos_map(self) -> dict:
+        """record_id -> [photo...]；导出用，子类按需覆盖。"""
+        return {}
+
 
 class SQLiteRepository(RecordRepository):
     def list(self, filters: dict, sort: list, limit: int = 0, offset: int = 0):
-        sql = "SELECT * FROM records WHERE 1=1"
+        # 顺带取一张封面照片 id：列表缩略图只需要这一张，不必返回整个 photos 数组
+        sql = ("SELECT *, (SELECT p.id FROM photos p WHERE p.record_id = records.id "
+               "ORDER BY p.created_at LIMIT 1) AS cover_id FROM records WHERE 1=1")
         args: list = []
         if filters.get("draftsOnly"):
             sql += " AND (draft=1)"
@@ -113,29 +190,31 @@ class SQLiteRepository(RecordRepository):
             sql += " AND avg_price >= ?"
             args.append(filters["avgPriceMin"])
         if filters.get("avgPriceMax") is not None:
-            sql += " AND avg_price <= ?"
+            # 区间统一为 [下限, 上限)：与看板分桶、前端 _matchFilters 的预估一致。
+            # 写成 <= 会让「30–60」多出恰好 60 元的记录，且与预览数量不符。
+            sql += " AND avg_price < ?"
             args.append(filters["avgPriceMax"])
         if filters.get("checkinStatus"):
             sql += " AND checkin_status = ?"
             args.append(filters["checkinStatus"])
         if filters.get("tags"):
-            for t in filters["tags"]:
-                sql += " AND tags LIKE ?"
-                args.append('%"' + t + '"%')  # 粗略匹配标签 JSON
+            # 默认 AND（都要有）；tagsAny=true 时改成 OR（有任一即可）
+            likes = ['%"' + t + '"%' for t in filters["tags"]]
+            if filters.get("tagsAny"):
+                sql += " AND (" + " OR ".join("tags LIKE ?" for _ in likes) + ")"
+                args += likes
+            else:
+                for kw in likes:
+                    sql += " AND tags LIKE ?"
+                    args.append(kw)
         if filters.get("bounds"):
             b = filters["bounds"]
             sql += " AND lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?"
             args += [b["swLng"], b["neLng"], b["swLat"], b["neLat"]]
 
         order_clauses = []
-        for field, direction in (sort or [("updated_at", "desc")]):
-            col = {
-                "updatedAt": "updated_at",
-                "rating": "rating",
-                "name": "name",
-                "avgPrice": "avg_price",
-                "createdAt": "created_at",
-            }.get(field, "updated_at")
+        for col, direction in normalize_sort(sort):
+            # col / direction 均来自白名单，不含任何用户原文
             order_clauses.append(f"{col} {direction}")
         sql += " ORDER BY " + ", ".join(order_clauses)
         if limit > 0:
@@ -210,6 +289,19 @@ class SQLiteRepository(RecordRepository):
                 total += cur.rowcount or 0
         return total
 
+    def photos_map(self) -> dict:
+        """一次取全部照片元数据，避免导出时逐条开连接（N+1）。"""
+        out: dict = {}
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, record_id, path, thumb, created_at FROM photos ORDER BY created_at"
+            ).fetchall()
+        for r in rows:
+            out.setdefault(r["record_id"], []).append({
+                "id": r["id"], "path": r["path"], "thumb": r["thumb"], "createdAt": r["created_at"],
+            })
+        return out
+
     def photo_paths(self, ids: list) -> list:
         """批量取照片文件路径（删除记录前清理磁盘文件用），同样单连接分批查询。"""
         if not ids:
@@ -252,6 +344,26 @@ class SQLiteRepository(RecordRepository):
                 ),
             )
         return "upsert"
+
+    def replace_photos(self, rid: str, photos: list) -> list:
+        """单事务内 DELETE 旧照片行 + INSERT 新照片行；返回旧照片元数据。
+
+        数据库行是「照片是否存在」的唯一真相：先换行，再删文件，
+        这样进程中途崩溃最多留下孤儿文件，不会出现记录指向不存在的照片。
+        """
+        with get_conn() as conn:
+            old = [
+                {"id": r["id"], "path": r["path"]}
+                for r in conn.execute(
+                    "SELECT id, path FROM photos WHERE record_id=?", (rid,)
+                ).fetchall()
+            ]
+            conn.execute("DELETE FROM photos WHERE record_id=?", (rid,))
+            conn.executemany(
+                "INSERT INTO photos(id,record_id,path,thumb,created_at) VALUES (?,?,?,?,?)",
+                [(p["id"], rid, p["path"], p.get("thumb"), p["createdAt"]) for p in photos],
+            )
+        return old
 
     def add_photo(self, photo: dict):
         with get_conn() as conn:
@@ -299,7 +411,10 @@ class SQLiteRepository(RecordRepository):
                           (SELECT COUNT(*) FROM photos p WHERE p.record_id = r.id) AS photo_count
                    FROM records r WHERE r.draft = 0"""
             ).fetchall()
-            photo_total = conn.execute("SELECT COUNT(*) c FROM photos").fetchone()["c"]
+            photo_total = conn.execute(
+                "SELECT COUNT(*) c FROM photos p JOIN records r ON r.id = p.record_id "
+                "WHERE r.draft = 0"
+            ).fetchone()["c"]
 
         total = len(rows)
         status = {"visited": 0, "want": 0, "favorite": 0}
@@ -334,7 +449,8 @@ class SQLiteRepository(RecordRepository):
                 rating = 0          # 脏数据不参与分布，也不影响均分
 
             price = r["avg_price"]
-            if isinstance(price, (int, float)) and price > 0:
+            # 0 元是有效价格（免费店），API 已允许，看板必须同口径，不能算成「缺人均」
+            if isinstance(price, (int, float)) and not isinstance(price, bool) and price >= 0:
                 prices.append(float(price))
             else:
                 q_no_price += 1
@@ -342,7 +458,7 @@ class SQLiteRepository(RecordRepository):
             tags = []
             if r["tags"]:
                 try:
-                    tags = json.loads(r["tags"]) or []
+                    tags = normalize_tags(json.loads(r["tags"]))
                 except (ValueError, TypeError):
                     tags = []
             if tags:
@@ -363,8 +479,13 @@ class SQLiteRepository(RecordRepository):
                 regions.add((round(r["lat"], 1), round(r["lng"], 1)))
 
             ts = _epoch_ms(r["created_at"])
+            created = None
             if ts:
-                created = datetime.fromtimestamp(ts / 1000)
+                try:
+                    created = datetime.fromtimestamp(ts / 1000)
+                except (OverflowError, OSError, ValueError):
+                    created = None
+            if created:
                 key = f"{created.year:04d}-{created.month:02d}"
                 if key in month_index:
                     month_index[key] += 1

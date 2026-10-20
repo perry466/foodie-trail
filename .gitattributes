@@ -1,0 +1,26 @@
+# 统一换行符，避免 Windows 检出后脚本带 CRLF
+# - *.sh 必须是 LF：CRLF 的 shebang 在 Linux/macOS 上会报
+#   "/usr/bin/env: 'bash\r': No such file or directory"
+# - *.bat 保持 CRLF：cmd 对单独 LF 的分支处理不解析
+
+*.sh    text eol=lf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.svg   text eol=lf
+*.txt   text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+# 图片等二进制文件不做换行转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.webp  binary

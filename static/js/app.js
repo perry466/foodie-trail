@@ -12,16 +12,100 @@ const API = {
   async upload(url, file){ const fd=new FormData(); fd.append('file',file); const r=await fetch(url,{method:'POST',body:fd}); if(!r.ok) throw await err(r); return r.json(); },
   async del(url, body){ const opt={method:'DELETE'}; if(body!==undefined){ opt.headers={'Content-Type':'application/json'}; opt.body=JSON.stringify(body); } const r=await fetch(url,opt); if(!r.ok) throw await err(r); return r.json(); },
 };
-async function err(r){ const base=r.statusText; try{ const j=await r.json(); const e=new Error(j.detail||j.msg||base); e.status=r.status; return e; }catch{ const e=new Error(base); e.status=r.status; return e; } }
+/* 把 FastAPI 的错误体转成一句人话。
+   Pydantic 422 的 detail 是数组：[{loc:['body','avgPrice'], msg:'Value error, 人均须为 …'}]，
+   直接塞进 Error 会变成 "[object Object]"，用户根本看不懂。 */
+function fmtDetail(d){
+  if(d==null) return '';
+  if(typeof d==='string') return d;
+  if(Array.isArray(d)){
+    return d.map(x=>String((x&&x.msg)||'输入不合法').replace(/^Value error,\s*/,'')).join('；');
+  }
+  if(typeof d==='object') return String(d.msg||JSON.stringify(d));
+  return String(d);
+}
+async function err(r){
+  const base=r.statusText||('HTTP '+r.status);
+  try{
+    const j=await r.json();
+    const e=new Error(fmtDetail(j.detail!==undefined?j.detail:j.msg)||base);
+    e.status=r.status; return e;
+  }catch{ const e=new Error(base); e.status=r.status; return e; }
+}
+/* 带上传进度 + 响应流读取的 POST：导入大文件时用（fetch 拿不到上传进度） */
+/* 上传文件并读取响应；响应是 NDJSON 时逐行触发 onEvent（导入写入进度）。
+   不用 XHR：实测 Chrome 对这种小分块流式响应，onprogress 会停发且 load 不触发；
+   fetch 的 ReadableStream 每一块都能读到。fetch 拿不到上传进度，
+   上传阶段由调用方用"不确定进度条"表示。 */
+async function streamUpload(url, file, { onEvent } = {}){
+  const fd = new FormData();
+  fd.append('file', file);
+  const r = await fetch(url, { method:'POST', body:fd });
+  if(!r.ok){
+    let msg = r.statusText || ('HTTP ' + r.status);
+    try{ const j = await r.json(); msg = fmtDetail(j.detail!==undefined?j.detail:j.msg) || msg; }catch{}
+    throw new Error(msg);
+  }
+  const ct = r.headers.get('content-type') || '';
+  if(ct.indexOf('ndjson') < 0){
+    const j = await r.json();
+    if(onEvent) onEvent(j);
+    return j;
+  }
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', last = null;
+  while(true){
+    const { value, done } = await reader.read();
+    if(done) break;
+    buf += dec.decode(value, { stream:true });
+    let nl;
+    while((nl = buf.indexOf('\n')) >= 0){
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if(!line) continue;
+      try{ last = JSON.parse(line); if(onEvent) onEvent(last); }catch{}
+    }
+  }
+  const rest = buf.trim();
+  if(rest){ try{ last = JSON.parse(rest); if(onEvent) onEvent(last); }catch{} }
+  return last;
+}
+
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
-function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.remove('hidden'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.add('hidden'),2200); }
+/* 记录/照片 id 拼进 URL 前必须编码：id 里出现 / ? # & 会让路径错位，详情直接 404 */
+const recPath = id => '/api/records/' + encodeURIComponent(id);
+const photoPath = id => '/api/photos/' + encodeURIComponent(id);
+function toast(msg, action){
+  const t=$('#toast');
+  if(!t) return;
+  // 带动作的 toast 需要真实 DOM；测试桩里没有 querySelector，退化成纯文本
+  if(action && typeof t.querySelector==='function'){
+    t.innerHTML=`<span>${esc(msg)}</span><button type="button" class="toast-act">${esc(action.label)}</button>`;
+    const b=t.querySelector('.toast-act');
+    if(b) b.onclick=()=>{ try{ action.fn(); }finally{ t.classList.add('hidden'); } };
+  }else{
+    t.textContent=msg;
+  }
+  t.classList.remove('hidden');
+  clearTimeout(t._t);
+  t._t=setTimeout(()=>t.classList.add('hidden'), action?4500:2200);
+}
 function esc(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function ratingColor(r){ return r<=2?'#9aa0a6':r===3?'#2f80ed':'#f0502f'; }
 function pinHTML(r){ return `<div style="background:${ratingColor(r)};box-sizing:border-box;width:34px;height:34px;border:2.5px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.35)"><span style="transform:rotate(45deg);display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/></svg></span></div>`; }
 function clusterHTML(n){ const size = n>=100?46:(n>=10?40:34); return `<div class="fm-cluster" style="width:${size}px;height:${size}px">${n}</div>`; }
 const MAP_LIMIT = 600; // 地图单次加载图钉上限（按视野取，缩到全中国也不超量）
 const DRAFT_KEY = 'fm-form-draft-v1';   // 添加表单的本地草稿（未提交内容）
+/* 人均档位：与看板 /api/dashboard 的价位分桶保持一致，下钻时能正确回填 */
+const PRICE_BUCKETS = [
+  { label:'<30',      min:0,   max:30 },
+  { label:'30–60',    min:30,  max:60 },
+  { label:'60–100',   min:60,  max:100 },
+  { label:'100–200',  min:100, max:200 },
+  { label:'≥200',     min:200, max:null },
+];
 
 /* ---------------- 地图适配 ---------------- */
 const MapView = {
@@ -34,7 +118,7 @@ const MapView = {
     try{ if(this._iw && this._iw.close) this._iw.close(); }catch(e){}
     try{ if(this._cw && this._cw.close) this._cw.close(); }catch(e){}
     this.impl=null; this.map=null; this.cluster=null; this._plain=null; this._records=[];
-    this._iw=null; this._cw=null; this._drawing=false; this._dt=null;
+    this._iw=null; this._cw=null; this._hoverPopup=null; this._drawing=false; this._dt=null;
     const el=document.getElementById('map');
     if(el) el.innerHTML='';       // Leaflet 会往容器塞 DOM，直接清空最保险
   },
@@ -42,8 +126,21 @@ const MapView = {
     this.destroy();
     const cfg = await API.get('/api/config/amap');
     this.cfg = cfg;
-    if(cfg.configured && cfg.key) await this.initAMap(cfg);
-    else await this.initLeaflet();
+    if(cfg.configured && cfg.key){
+      try{
+        await this.initAMap(cfg);
+      }catch(e){
+        // 配了 Key 也可能失败：脚本被墙、CDN 抖动、Key 失效。
+        // 必须退回本地 Leaflet，否则地图整块空白，用户只能看到一个空容器。
+        console.warn('[map] 高德加载失败，回退本地底图：', e && e.message);
+        try{ this.destroy(); }catch(_){}
+        await this.initLeaflet();
+        this._amapFailed = true;
+        try{ toast('高德地图加载失败，已切到本地底图'); }catch(_){}
+      }
+    } else {
+      await this.initLeaflet();
+    }
     this.render(window.__APP__ ? window.__APP__.records.slice() : []);
   },
   async initAMap(cfg){
@@ -57,11 +154,18 @@ const MapView = {
     this.map.on('click', e=>{
       const app=window.__APP__;
       if(app && app.pickMode && app.pickCb){ app.pickCb(e.lnglat.getLng(), e.lnglat.getLat()); return; }
-      if(app) app.closeDetail();   // 点击地图空白处收起详情卡片
+      // 空白点击统一由 document 层处理（带拖动判定），这里不重复关闭
     });
     // 缩放后网格聚合需要重算（平移不影响地理坐标，无需重算）
     this.map.on('zoomend', ()=>this._scheduleDraw());
     this.map.on('moveend', ()=>{ const a=window.__APP__; if(a && a.onMapMoveEnd) a.onMapMoveEnd(); });
+    // 右键（高德桌面端的长按等价操作）：带上坐标直接新增
+    this.map.on('rightclick', e=>{
+      const app=window.__APP__;
+      const lng=e.lnglat.getLng(), lat=e.lnglat.getLat();
+      if(app && app.pickMode && app.pickCb){ app.pickCb(lng,lat); return; }
+      if(app && app.onMapLongPress) app.onMapLongPress(lng,lat);
+    });
   },
   async initLeaflet(){
     await loadCSS('/lib/leaflet/leaflet.css');
@@ -75,9 +179,15 @@ const MapView = {
     this.map.on('click', e=>{
       const app=window.__APP__;
       if(app && app.pickMode && app.pickCb){ app.pickCb(e.latlng.lng, e.latlng.lat); return; }
-      if(app) app.closeDetail();   // 点击地图空白处收起详情卡片
+      // 空白点击统一由 document 层处理（带拖动判定），这里不重复关闭
     });
     this.map.on('moveend', ()=>{ const a=window.__APP__; if(a && a.onMapMoveEnd) a.onMapMoveEnd(); });
+    // 右键/长按地图：带上坐标直接新增
+    this.map.on('contextmenu', e=>{
+      const app=window.__APP__;
+      if(app && app.pickMode && app.pickCb){ app.pickCb(e.latlng.lng, e.latlng.lat); return; }
+      if(app && app.onMapLongPress) app.onMapLongPress(e.latlng.lng, e.latlng.lat);
+    });
     this.showFallbackBanner();
   },
   showFallbackBanner(){
@@ -188,6 +298,27 @@ const MapView = {
     this._cw.setContent(wrap);
     this._cw.open(this.map, pos);
   },
+  /* 列表 hover → 地图上弹出该店的预览气泡（不移动地图，避免跟着鼠标乱飞） */
+  hoverRecord(r){
+    if(!this.map || !r) return;
+    const html=previewHTML(r);
+    try{
+      if(this.impl==='amap'){
+        this._iw.setContent(html); this._iw.open(this.map,[r.lng,r.lat]);
+      }else{
+        if(!this._hoverPopup){
+          this._hoverPopup=L.popup({closeButton:false,offset:[0,-34],className:'pin-tip-box',autoPan:false});
+        }
+        this._hoverPopup.setLatLng([r.lat,r.lng]).setContent(html).openOn(this.map);
+      }
+    }catch(e){}
+  },
+  hoverEnd(){
+    try{
+      if(this.impl==='amap'){ if(this._iw) this._iw.close(); }
+      else if(this._hoverPopup && this.map) this.map.closePopup(this._hoverPopup);
+    }catch(e){}
+  },
   flyTo(r){ if(this.impl==='amap') this.map.setZoomAndCenter(16,[r.lng,r.lat]); else this.map.flyTo([r.lat,r.lng],16); },
   fitChina(){ if(this.impl==='amap') this.map.setZoomAndCenter(4,[104.2,35.5]); else this.map.setView([35.5,104.2],4); },
   getBounds(){
@@ -269,7 +400,7 @@ function previewHTML(r){
 /* ---------------- 图片大图预览（独立于 Vue） ---------------- */
 function openLightbox(photos, i){
   window.__LB__={photos,i};
-  $('#lbImg').src='/api/photos/'+photos[i].id;
+  $('#lbImg').src=photoPath(photos[i].id);
   $('#lbCounter').textContent=`${i+1} / ${photos.length}`;
   const multi=photos.length>1;
   $('#lbPrev').classList.toggle('hidden',!multi);
@@ -282,7 +413,7 @@ function lbNav(d){
   if(!window.__LB__) return;
   const p=window.__LB__.photos,n=p.length;
   window.__LB__.i=((window.__LB__.i+d)%n+n)%n;
-  $('#lbImg').src='/api/photos/'+p[window.__LB__.i].id;
+  $('#lbImg').src=photoPath(p[window.__LB__.i].id);
   $('#lbCounter').textContent=`${window.__LB__.i+1} / ${n}`;
 }
 function bindLightbox(){
@@ -301,16 +432,24 @@ const App = {
       panel:'none',
       showMarkers:true,
       moreOpen:false,
+      /* 筛选面板：草稿态。改动只更新 filterDraft，点「应用」才写回 filters */
+      filterOpen:false,
+      filterDraft:{ ratingMin:0, ratingMax:null, priceMin:null, priceMax:null, tags:[], tagsMode:'all', drafts:'all', viewOnly:false },
+      tagQuery:'',
+      facetRecords:[], facetReady:false,
+      themeName:'浅色',
+      priceBuckets:PRICE_BUCKETS,
       settingsOpen:false, formOpen:false, detailOpen:false, dashOpen:false, importOpen:false,
       confirmBox:{ open:false, title:'', message:'', ok:'确认', danger:false, busy:false, onlyOk:false },
-      records:[], page:1, pageSize:100, listTotal:0,
+      records:[], renderCount:60, listTotal:0, activeIdx:-1,
       selectMode:false, selectedIds:[],
-      filters:{ keyword:'', sort:'updatedAt:desc', tags:[], rating:0, checkin:'', viewOnly:false, priceMin:null, priceMax:null, drafts:'all' },
+      filters:{ keyword:'', sort:'updatedAt:desc', tags:[], tagsMode:'all', ratingMin:0, ratingMax:null, checkin:'', viewOnly:false, priceMin:null, priceMax:null, drafts:'all' },
       viewBounds:null,
       allTags:[],
       detail:null,
       form:{ id:null, name:'', rating:3, price:'', checkin:'', note:'', draft:false, lat:null, lng:null, address:'' },
       formTags:[], formPhotos:[], formNewPhotos:[], formRemoved:[], hours:null, formMsg:'', tagInput:'',
+      formMore:false, formErr:{ name:'', loc:'' },
       /* 位置状态：locName 是地点名，locCoord 是"纬度, 经度"字符串，两者都空表示未选点 */
       locName:'', locCoord:'',
       /* 地址联想：输入即搜（无需回车），poiActive 是键盘当前高亮项 */
@@ -318,6 +457,7 @@ const App = {
       settings:{ key:'', security:'', webKey:'', connMsg:'', realKey:'' },
       dash:null,
       importPreview:'', importReady:false, importFile:null,
+      importBusy:false, importIndet:false, importPercent:0, importText:'',
       pickMode:false, pickCb:null, pickingMap:false, _pickedAt:0,
       mapConfig:{ configured:false },
       draftNotice:'', draftSaved:false, _suppressDraft:false,
@@ -332,14 +472,49 @@ const App = {
     /* 按草稿可见范围过滤后的记录（分页与计数都基于它） */
     visibleRecords(){ return this._visible(this.records); },
     draftCount(){ return this.records.filter(r=>r.draft).length; },
+    /* 滚动加载：只渲染前 N 条，滚动到底前再追加，避免 1000 条一次性进 DOM */
     pagedRecords(){
-      const size=this.pageSize||100;
-      const list=this.visibleRecords;
-      const pages=Math.max(1,Math.ceil(list.length/size));
-      const p=Math.min(Math.max(1,this.page),pages);
-      return list.slice((p-1)*size,p*size);
+      const n=Math.max(60, this.renderCount||60);
+      return this.visibleRecords.slice(0,n);
     },
-    pages(){ const size=this.pageSize||100; return Math.max(1,Math.ceil(this.visibleRecords.length/size)); },
+    /* 当前生效的筛选条件数（不含关键词与排序） */
+    activeFilterCount(){
+      const f=this.filters;
+      let n=0;
+      if(f.ratingMin||f.ratingMax) n++;
+      if(f.priceMin!=null||f.priceMax!=null) n++;
+      n+=f.tags.length;
+      if(f.drafts!=='all') n++;
+      if(f.viewOnly) n++;
+      return n;
+    },
+    hasActiveFilters(){ return this.activeFilterCount>0 || !!this.filters.keyword.trim(); },
+    /* 已选条件 chips：单个可移除，避免"忘了哪个条件没关" */
+    activeChips(){
+      const f=this.filters, out=[];
+      if(f.ratingMin||f.ratingMax){
+        const lo=f.ratingMin||1, hi=f.ratingMax;
+        const t=(hi&&hi===lo)?`${lo} 星`:(hi?`${lo}–${hi} 星`:`≥${lo} 星`);
+        out.push({k:'rating', t});
+      }
+      if(f.priceMin!=null||f.priceMax!=null) out.push({k:'price', t:'人均 '+this._priceLabel(f.priceMin,f.priceMax)});
+      f.tags.forEach((t,i)=>out.push({k:'tag'+i, t:'标签 · '+t}));
+      if(f.tags.length>1 && f.tagsMode==='any') out.push({k:'tagsMode', t:'标签：任一'});
+      if(f.drafts==='hide') out.push({k:'drafts', t:'不含草稿'});
+      if(f.drafts==='only') out.push({k:'drafts', t:'仅草稿'});
+      if(f.viewOnly) out.push({k:'viewOnly', t:'仅看当前视野'});
+      return out;
+    },
+    filteredTags(){
+      const q=(this.tagQuery||'').trim().toLowerCase();
+      return q ? this.allTags.filter(t=>t.t.toLowerCase().includes(q)) : this.allTags;
+    },
+    /* 面板里的「符合 N 家」：纯本地估算，不发请求 */
+    filterDraftCount(){
+      if(!this.facetReady) return '…';
+      const f=this.filterDraft;
+      return this.facetRecords.filter(r=>this._matchFilters(r,f)).length;
+    },
     /* 看板图表用的最大值（决定柱子相对高度） */
     dashRatingMax(){ return this.dash ? Math.max(1, ...this.dash.rating.dist.map(d=>d.count)) : 1; },
     dashPriceMax(){ return this.dash ? Math.max(1, ...this.dash.price.buckets.map(b=>b.count)) : 1; },
@@ -352,10 +527,28 @@ const App = {
     hours:{ handler(){ this.scheduleDraft(); }, deep:true },
     locName(){ this.scheduleDraft(); },
     locCoord(){ this.scheduleDraft(); },
+    /* 清单打开时给 body 打个标记：地图兜底提示条要避开左侧面板 */
+    panel(v){ document.body.classList.toggle('fm-list-open', v==='list'); },
   },
   methods:{
     statusOf(r){ return {want:'想去',visited:'去过',favorite:'收藏'}[r.checkinStatus]||''; },
-    photoURL(f){ return URL.createObjectURL(f); },
+    photoSrc(id){ return photoPath(id); },
+    photoURL(f){
+      if(!f) return '';
+      let u=this._photoURLs.get(f);
+      if(!u){ u=URL.createObjectURL(f); this._photoURLs.set(f,u); }   // 每个 File 只建一次
+      return u;
+    },
+    releasePhotoURL(f){
+      if(!this._photoURLs) return;
+      const u=f&&this._photoURLs.get(f);
+      if(u){ URL.revokeObjectURL(u); this._photoURLs.delete(f); }
+    },
+    releaseAllPhotoURLs(){
+      if(!this._photoURLs) return;
+      for(const u of this._photoURLs.values()) URL.revokeObjectURL(u);
+      this._photoURLs.clear();
+    },
     fmtHours(s){ return fmtHoursRaw(s); },
 
     /* 应用内确认弹窗（替代浏览器原生 confirm） */
@@ -393,7 +586,7 @@ const App = {
         const fallback=[404,405,422,501].includes(e.status);
         if(!fallback) throw e;
         let n=0;
-        for(const id of ids){ await API.del('/api/records/'+id); n++; }
+        for(const id of ids){ await API.del(recPath(id)); n++; }
         return n;
       }
     },
@@ -404,6 +597,7 @@ const App = {
       const next=cur==='dark'?'light':'dark';
       document.documentElement.setAttribute('data-theme',next);
       try{ localStorage.setItem('fm-theme',next); }catch{}
+      this.themeName = next==='dark' ? '深色' : '浅色';
       this.moreOpen=false;
     },
 
@@ -415,9 +609,18 @@ const App = {
       toast(this.showMarkers?'已显示描点':'已隐藏描点');
     },
 
-    /* 面板开关 */
+    /* 视图切换：地图 / 清单 / 看板 */
+    goHome(){ this.moreOpen=false; this.panel='none'; this.dashOpen=false; this.filterOpen=false; this.fitChina(); this._syncURL(); },
+    goMap(){ this.moreOpen=false; this.panel='none'; this.dashOpen=false; this.filterOpen=false; this.closeDetail(); this._syncURL(); },
+    openList(){
+      this.moreOpen=false; this.dashOpen=false; this.panel='list';
+      this._syncURL();
+      // 「仅看当前视野」在打开清单时按此刻地图范围重取，避免用的是上次的 bounds
+      if(this.filters.viewOnly){ this.viewBounds=MapView.getBounds(); this.loadRecords(); }
+    },
+    /* 面板开关（保留旧调用点） */
     togglePanel(name){ this.moreOpen=false; this.panel = this.panel===name ? 'none' : name; },
-    closePanel(){ this.panel='none'; this.exitSelect(); },
+    closePanel(){ this.panel='none'; this.filterOpen=false; this.exitSelect(); this._syncURL(); },
     fitChina(){ MapView.fitChina(); this.moreOpen=false; },
 
     /* 数据加载 */
@@ -429,27 +632,54 @@ const App = {
       if(f.viewOnly && this.viewBounds){ const b=this.viewBounds; url+=`&swLng=${b.swLng}&swLat=${b.swLat}&neLng=${b.neLng}&neLat=${b.neLat}`; }
       try{
         const recs=await API.get(url);
-        this.records=recs; this.listTotal=this._visible(recs).length; this.page=1;
+        this.records=recs; this.listTotal=this._visible(recs).length;
         // 清除已不存在于当前结果里的选中项（如被筛掉或已删除），避免误删
         if(this.selectedIds.length){
           const alive=new Set(this._visible(recs).map(r=>r.id));
           this.selectedIds=this.selectedIds.filter(id=>alive.has(id));
         }
         const cnt={}; recs.forEach(r=>(r.tags||[]).forEach(t=>cnt[t]=(cnt[t]||0)+1));
-        this.allTags=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,24).map(([t,c])=>({t,c}));
+        // 不再截断到 24 个：标签多了以后长尾标签也要能筛到（面板里可搜索）
+        this.allTags=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).map(([t,c])=>({t,c}));
         await this.reloadMap();   // 地图按视野动态加载，不再全量渲染
+        this._syncURL();
       }catch(e){ toast('加载失败：'+e.message); }
     },
     onSearch(){ clearTimeout(this._st); this._st=setTimeout(()=>this.loadRecords(),250); },
-    goto(p){ this.page=p; },
+    /* 列表滚动到底部前 240px，追加 60 条 */
+    onListScroll(e){
+      const el=e.target;
+      if(this._moreLock) return;
+      if(el.scrollTop+el.clientHeight < el.scrollHeight-240) return;
+      if(this.renderCount>=this.visibleRecords.length) return;
+      this._moreLock=true;
+      this.renderCount=Math.min(this.visibleRecords.length, this.renderCount+60);
+      this.$nextTick(()=>{ this._moreLock=false; });
+    },
+    /* 把某条记录滚进视野；若它还没渲染，先把 renderCount 扩到它之后 */
+    _revealRecord(id){
+      const idx=this.visibleRecords.findIndex(r=>r.id===id);
+      if(idx<0) return;
+      if(idx>=this.renderCount) this.renderCount=Math.min(this.visibleRecords.length, idx+20);
+      this.$nextTick(()=>{
+        // 不用选择器拼 id：旧数据里可能有引号/空格，直接按 dataset 比对更稳
+        const el=$$('.rec-card').find(x=>x.dataset.rid===String(id));
+        if(el) el.scrollIntoView({block:'nearest', behavior:'smooth'});
+      });
+    },
     /* 筛选条件拼成查询串（列表与地图共用）
        withDrafts=true 时把草稿一并取回（列表用）；
        draftsOnly=true 时只取草稿（地图在"仅草稿"下必须与列表同范围，否则会混入非草稿） */
     _filterQuery(withDrafts, draftsOnly){
       const f=this.filters;
       let q=`keyword=${encodeURIComponent(f.keyword)}&sort=${f.sort}&checkinStatus=${f.checkin}`;
-      if(f.rating) q+=`&ratingMin=${f.rating}&ratingMax=${f.rating}`;
-      if(f.tags.length) q+=`&tags=${encodeURIComponent(f.tags.join(','))}`;
+      // 星级是「下限」语义：只看 ≥N 星，不再写死区间
+      if(f.ratingMin) q+=`&ratingMin=${f.ratingMin}`;
+      if(f.ratingMax) q+=`&ratingMax=${f.ratingMax}`;
+      if(f.tags.length){
+        q+=`&tags=${encodeURIComponent(f.tags.join(','))}`;
+        if(f.tagsMode==='any') q+='&tagsAny=1';
+      }
       if(f.priceMin!=null) q+=`&avgPriceMin=${f.priceMin}`;
       if(f.priceMax!=null) q+=`&avgPriceMax=${f.priceMax}`;
       if(draftsOnly) q+='&includeDrafts=1&draftsOnly=1';
@@ -478,19 +708,85 @@ const App = {
         MapView.render(recs);
       }catch(e){ /* 视野加载失败不影响列表，忽略 */ }
     },
-    onMapMoveEnd(){ clearTimeout(this._mmT); this._mmT = setTimeout(()=>this.reloadMap(), 350); },
+    onMapMoveEnd(){
+      clearTimeout(this._mmT);
+      this._mmT=setTimeout(()=>{
+        if(this.filters.viewOnly && this.panel==='list'){
+          this.viewBounds=MapView.getBounds();
+          this.loadRecords();            // loadRecords 内部会 reloadMap，不重复请求
+        }else{
+          this.reloadMap();
+        }
+      }, 380);
+    },
 
     /* 详情 */
     async showDetail(id){
       const token=(this._detailReq=(this._detailReq||0)+1);   // 竞态守卫：仅最新的点击生效
       try{
-        const r=await API.get('/api/records/'+id);
+        const r=await API.get(recPath(id));
         if(token!==this._detailReq) return;                   // 已有更新的请求，丢弃本次旧结果
         this.detail=r; this.detailOpen=true;
         MapView.flyTo(r);
+        if(this.panel==='list') this._revealRecord(r.id);
       }catch(e){ if(token===this._detailReq) toast('打开失败：'+e.message); }
     },
-    closeDetail(){ this.detailOpen=false; },
+    closeDetail(){ this.detailOpen=false; this.activeIdx=-1; },
+    /* 点击空白：按「详情 → 筛选 → 清单」逐层返回。
+       snap 是按下瞬间的快照，避免同一次点击被多个处理器各关一层。 */
+    onMapBlankClick(snap){
+      snap = snap || { detail:this.detailOpen, filter:this.filterOpen, panel:this.panel, form:this.formOpen };
+      if(snap.form) return;              // 表单开着时点空白不应悄悄关掉背后的清单
+      if(snap.filter){ this.filterOpen=false; return; }
+      if(snap.detail){ this.closeDetail(); return; }
+      if(snap.panel==='list'){ this.closePanel(); }
+    },
+
+    /* ---------- 列表卡片 / 详情的快捷操作 ---------- */
+    /* PUT 是全量替换，所以要把未改动的字段一起带上；照片不在此接口内，不会被误删 */
+    _recordBody(r, extra){
+      return Object.assign({
+        name:r.name, lng:r.lng, lat:r.lat, rating:r.rating,
+        tags:r.tags||[], businessHours:r.businessHours||null,
+        avgPrice:r.avgPrice!=null?r.avgPrice:null,
+        checkinStatus:r.checkinStatus||null, note:r.note||null, draft:!!r.draft,
+      }, extra||{});
+    },
+    locateRecord(r){ MapView.flyTo(r); toast('已定位：'+r.name); },
+    async markVisited(r){
+      if(r.checkinStatus==='visited') return;
+      try{
+        await API.sendForm(recPath(r.id),'PUT',this._recordBody(r,{checkinStatus:'visited'}));
+        toast(`「${r.name}」已标记为去过`);
+        if(this.detail && this.detail.id===r.id) this.detail={...this.detail, checkinStatus:'visited'};
+        await this.loadRecords();
+      }catch(e){ toast('修改失败：'+e.message); }
+    },
+    /* 列表接口不带照片，编辑前先取完整记录，避免打开表单后照片"消失" */
+    async editRecord(r){
+      try{ const full=await API.get(recPath(r.id)); this.openForm(full); }
+      catch(e){ toast('打开失败：'+e.message); }
+    },
+    navTo(r){
+      const url='https://uri.amap.com/marker?position='+r.lng+','+r.lat
+        +'&name='+encodeURIComponent(r.name||'美食')+'&src=foodmap&coordinate=gaode&callnative=0';
+      window.open(url,'_blank','noopener');
+    },
+    async setDetailStatus(s){
+      const d=this.detail;
+      if(!d || d.checkinStatus===s) return;
+      const prev=d.checkinStatus;
+      this.detail={...d, checkinStatus:s};        // 乐观更新，失败回滚
+      try{
+        const rec=await API.sendForm(recPath(d.id),'PUT',this._recordBody(d,{checkinStatus:s}));
+        this.detail=rec;
+        toast('已标记为'+({want:'想去',visited:'去过',favorite:'收藏'}[s]||s));
+        await this.loadRecords();
+      }catch(e){
+        this.detail={...this.detail, checkinStatus:prev};
+        toast('修改失败：'+e.message);
+      }
+    },
     async deleteDetail(){
       if(!this.detail) return;
       const id=this.detail.id, name=this.detail.name;
@@ -502,7 +798,7 @@ const App = {
       if(!ok) return;
       this.setConfirmBusy(true);
       try{
-        await API.del('/api/records/'+id);
+        await API.del(recPath(id));
         this.closeConfirm(true);
         toast('已删除');
         this.detailOpen=false; this.detail=null;
@@ -514,7 +810,7 @@ const App = {
     },
 
     /* 批量选择 / 批量删除（列表抽屉内） */
-    enterSelect(){ this.moreOpen=false; this.panel='list'; this.selectMode=true; },
+    enterSelect(){ this.moreOpen=false; this.filterOpen=false; this.panel='list'; this.selectMode=true; },
     exitSelect(){ this.selectMode=false; this.selectedIds=[]; },
     isSelected(id){ return this.selectedIds.includes(id); },
     toggleSelect(id){
@@ -553,35 +849,217 @@ const App = {
       }
     },
 
-    /* 筛选 */
-    toggleStar(n){ this.filters.rating = this.filters.rating===n?0:n; this.loadRecords(); },
-    setStar(n){ this.filters.rating=n; this.loadRecords(); },
-    toggleTag(t){ const i=this.filters.tags.indexOf(t); if(i>=0)this.filters.tags.splice(i,1); else this.filters.tags.push(t); this.loadRecords(); },
-    setCheckin(c){ this.filters.checkin=c; this.loadRecords(); },
+    /* ---------- 筛选：筛选栏即时生效，面板内是草稿态 ---------- */
+    setCheckin(c){ this.filters.checkin=c; this.renderCount=60; this.loadRecords(); },
+    _priceLabel(min,max){
+      const b=PRICE_BUCKETS.find(x=>x.min===min && x.max===max);
+      if(b) return '¥'+b.label;
+      if(min!=null && max!=null) return `¥${min}–${max}`;
+      if(min!=null) return `≥¥${min}`;
+      return `低于 ¥${max}`;    // 上限是开区间（< max），写 ≤ 会差一块钱
+    },
+    /* 本地匹配：与后端 list() 的条件保持一致，用于面板里的结果预估 */
+    _matchFilters(r,f){
+      const kw=(this.filters.keyword||'').trim().toLowerCase();
+      if(kw){
+        const hay=((r.name||'')+' '+(r.note||'')+' '+(r.tags||[]).join(' ')).toLowerCase();
+        if(!hay.includes(kw)) return false;
+      }
+      if(this.filters.checkin && r.checkinStatus!==this.filters.checkin) return false;
+      if(f.ratingMin && r.rating<f.ratingMin) return false;
+      if(f.ratingMax && r.rating>f.ratingMax) return false;
+      if(f.priceMin!=null || f.priceMax!=null){
+        if(r.avgPrice==null) return false;
+        if(f.priceMin!=null && r.avgPrice<f.priceMin) return false;
+        if(f.priceMax!=null && r.avgPrice>=f.priceMax) return false;
+      }
+      if(f.tags.length){
+        const has=(r.tags||[]);
+        const ok=f.tagsMode==='any' ? f.tags.some(t=>has.includes(t)) : f.tags.every(t=>has.includes(t));
+        if(!ok) return false;
+      }
+      if(f.drafts==='hide' && r.draft) return false;
+      if(f.drafts==='only' && !r.draft) return false;
+      return true;
+    },
+    async toggleFilter(){
+      if(this.filterOpen){ this.filterOpen=false; return; }
+      // 打开时把已生效条件复制成草稿；面板内改动不发请求
+      this.filterDraft={
+        ratingMin:this.filters.ratingMin, ratingMax:this.filters.ratingMax,
+        priceMin:this.filters.priceMin, priceMax:this.filters.priceMax,
+        tags:[...this.filters.tags], tagsMode:this.filters.tagsMode,
+        drafts:this.filters.drafts, viewOnly:this.filters.viewOnly,
+      };
+      this.tagQuery='';
+      this.filterOpen=true;
+      this.facetReady=false;
+      try{
+        const recs=await API.get('/api/records?includeDrafts=1&sort='+encodeURIComponent(this.filters.sort));
+        this.facetRecords=recs;
+      }catch(e){ this.facetRecords=[]; }
+      this.facetReady=true;
+    },
+    setDraftPrice(i){
+      if(i==null){ this.filterDraft.priceMin=null; this.filterDraft.priceMax=null; return; }
+      const b=PRICE_BUCKETS[i];
+      this.filterDraft.priceMin=b.min; this.filterDraft.priceMax=b.max;
+    },
+    toggleDraftTag(t){
+      const i=this.filterDraft.tags.indexOf(t);
+      if(i>=0) this.filterDraft.tags.splice(i,1); else this.filterDraft.tags.push(t);
+    },
+    resetDraftFilter(){
+      this.filterDraft={ ratingMin:0, ratingMax:null, priceMin:null, priceMax:null, tags:[], tagsMode:'all', drafts:'all', viewOnly:false };
+    },
+    applyFilter(){
+      const d=this.filterDraft;
+      this.filters.ratingMin=d.ratingMin;
+      this.filters.ratingMax=d.ratingMax||null;
+      this.filters.priceMin=d.priceMin;
+      this.filters.priceMax=d.priceMax;
+      this.filters.tags=[...d.tags];
+      this.filters.tagsMode=d.tagsMode||'all';
+      this.filters.drafts=d.drafts;
+      // 「仅看当前视野」是模式不是阈值：打开时锁定当前视野，关闭时清掉 bounds
+      if(d.viewOnly && !this.filters.viewOnly) this.viewBounds=MapView.getBounds();
+      if(!d.viewOnly) this.viewBounds=null;
+      this.filters.viewOnly=d.viewOnly;
+      this.filterOpen=false;
+      this.renderCount=60;
+      const n=((d.ratingMin||d.ratingMax)?1:0)+((d.priceMin!=null||d.priceMax!=null)?1:0)+d.tags.length+(d.drafts!=='all'?1:0);
+      this.loadRecords();
+      toast(n?`已应用筛选 · ${n} 个条件`:'已清除筛选');
+    },
+    removeChip(k){
+      const f=this.filters;
+      if(k==='rating'){ f.ratingMin=0; f.ratingMax=null; }
+      else if(k==='price'){ f.priceMin=null; f.priceMax=null; }
+      else if(k==='drafts') f.drafts='all';
+      else if(k==='tagsMode') f.tagsMode='all';
+      else if(k==='viewOnly'){ f.viewOnly=false; this.viewBounds=null; }
+      else if(k.indexOf('tag')===0) f.tags.splice(+k.slice(3),1);
+      this.renderCount=60; this.loadRecords();
+    },
+    clearFilters(){
+      Object.assign(this.filters,{
+        keyword:'', tags:[], tagsMode:'all', ratingMin:0, ratingMax:null, checkin:'', viewOnly:false,
+        priceMin:null, priceMax:null, drafts:'all',
+      });
+      this.viewBounds=null; this.tagQuery='';
+      this.filterDraft={ ratingMin:0, ratingMax:null, priceMin:null, priceMax:null, tags:[], drafts:'all', viewOnly:false };
+      this.filterOpen=false; this.renderCount=60;
+      this.loadRecords();
+    },
+    /* 旧接口保留：草稿范围仍要保证列表与地图同源 */
     setDrafts(v){
       if(this.filters.drafts===v) return;
-      this.filters.drafts=v; this.page=1; this.listTotal=this.visibleRecords.length;
-      this.reloadMap();          // 草稿范围变了，地图立即按同一范围重取，不必等拖动地图
+      this.filters.drafts=v; this.renderCount=60; this.listTotal=this.visibleRecords.length;
+      this.reloadMap();
     },
     onViewOnly(e){ this.filters.viewOnly=e.target.checked; if(this.filters.viewOnly) this.viewBounds=MapView.getBounds(); else this.viewBounds=null; this.loadRecords(); },
-    resetFilter(){ this.filters={keyword:'',sort:'updatedAt:desc',tags:[],rating:0,checkin:'',viewOnly:false,priceMin:null,priceMax:null,drafts:'all'}; this.viewBounds=null; this.loadRecords(); },
+    resetFilter(){ this.clearFilters(); },
+
+    /* ---------- URL 状态：刷新、分享、前进后退都不丢筛选 ---------- */
+    _syncURL(){
+      const f=this.filters, q=new URLSearchParams();
+      if(this.panel==='list') q.set('view','list');
+      if(f.checkin) q.set('status',f.checkin);
+      if(f.ratingMin) q.set('rating',String(f.ratingMin));
+      if(f.ratingMax) q.set('ratingMax',String(f.ratingMax));
+      if(f.priceMin!=null||f.priceMax!=null) q.set('price',`${f.priceMin==null?'':f.priceMin}-${f.priceMax==null?'':f.priceMax}`);
+      if(f.tags.length) q.set('tags',f.tags.join(','));
+      if(f.tags.length>1 && f.tagsMode==='any') q.set('tagsMode','any');
+      if(f.drafts!=='all') q.set('drafts',f.drafts);
+      if(f.viewOnly) q.set('viewOnly','1');
+      if(f.keyword.trim()) q.set('q',f.keyword.trim());
+      if(f.sort!=='updatedAt:desc') q.set('sort',f.sort);
+      const s=q.toString();
+      try{ history.replaceState(null,'',location.pathname+(s?'?'+s:'')); }catch(e){}
+    },
+    _readURL(){
+      const q=new URLSearchParams(location.search);
+      if(q.get('view')==='list') this.panel='list';
+      const st=q.get('status');
+      if(['want','visited','favorite'].indexOf(st)>=0) this.filters.checkin=st;
+      const rt=parseInt(q.get('rating'),10);
+      if(rt>=1&&rt<=5) this.filters.ratingMin=rt;
+      const rMax=parseInt(q.get('ratingMax'),10);
+      if(rMax>=1&&rMax<=5) this.filters.ratingMax=rMax;
+      const pr=q.get('price');
+      if(pr){
+        const parts=pr.split('-');
+        if(parts[0]) this.filters.priceMin=parseInt(parts[0],10);
+        if(parts[1]) this.filters.priceMax=parseInt(parts[1],10);
+      }
+      const tg=q.get('tags');
+      if(tg) this.filters.tags=tg.split(',').filter(Boolean);
+      if(q.get('tagsMode')==='any') this.filters.tagsMode='any';
+      const df=q.get('drafts');
+      if(df==='hide'||df==='only') this.filters.drafts=df;
+      if(q.get('viewOnly')==='1') this.filters.viewOnly=true;
+      const kw=q.get('q'); if(kw) this.filters.keyword=kw;
+      const so=q.get('sort'); if(so) this.filters.sort=so;
+      this.filterDraft={
+        ratingMin:this.filters.ratingMin, ratingMax:this.filters.ratingMax,
+        priceMin:this.filters.priceMin, priceMax:this.filters.priceMax,
+        tags:[...this.filters.tags], tagsMode:this.filters.tagsMode,
+        drafts:this.filters.drafts, viewOnly:this.filters.viewOnly,
+      };
+    },
+    mapHover(r){ MapView.hoverRecord(r); },
+    mapLeave(){ MapView.hoverEnd(); },
+    /* 键盘：↑↓ 在列表内移动，Enter 打开 */
+    _moveActive(d){
+      const list=this.pagedRecords;
+      if(!list.length) return;
+      let i=this.activeIdx;
+      i = i<0 ? (d>0?0:list.length-1) : Math.min(list.length-1, Math.max(0,i+d));
+      this.activeIdx=i;
+      this.$nextTick(()=>{
+        const el=document.querySelectorAll('.rec-card')[i];
+        if(el) el.scrollIntoView({block:'nearest'});
+      });
+      MapView.hoverRecord(list[i]);
+    },
+    _openActive(){
+      const r=this.pagedRecords[this.activeIdx];
+      if(r) this.showDetail(r.id);
+    },
 
     /* 看板：加载 + 图表下钻（点图表即筛到列表） */
     async openDash(){
       this.moreOpen=false;
+      this.panel='none'; this.filterOpen=false;
       try{ this.dash=await API.get('/api/dashboard'); this.dashOpen=true; }
       catch(e){ toast('看板加载失败：'+e.message); }
     },
     dashDrill(kind, val){
-      const f={ rating:0, priceMin:null, priceMax:null, checkin:'', tags:[] };
+      /* 看板统计的是「全部非草稿」，所以下钻必须把其它遗留条件一起清掉：
+         否则之前开着「仅草稿」或搜索词时，点图表会得到空列表、数量也对不上。
+         草稿范围也设成 hide——图表里的数字本来就不含草稿，否则点「4★ 42」
+         会得到 44 条（多出草稿），数字对不上。 */
+      const f={
+        keyword:'', sort:'updatedAt:desc', checkin:'',
+        ratingMin:0, ratingMax:null, priceMin:null, priceMax:null,
+        tags:[], tagsMode:'all', drafts:'hide', viewOnly:false,
+      };
       let label='';
       if(kind==='checkin'){ f.checkin=val; label={visited:'去过',want:'想去',favorite:'收藏'}[val]||'全部'; }
-      else if(kind==='star'){ f.rating=val; label=val+' 星'; }
+      // 柱状图是「精确星级」：4 星就只筛 4 星，不能把 5 星也算进来
+      else if(kind==='star'){ f.ratingMin=val; f.ratingMax=val; label=val+' 星'; }
       else if(kind==='price'){ const b=this.dash.price.buckets[val]; f.priceMin=b.min; f.priceMax=b.max; label='人均 '+b.label; }
       else if(kind==='tag'){ f.tags=[val]; label=val; }
       this.dashOpen=false;
+      this.viewBounds=null;
       Object.assign(this.filters, f);
-      this.panel='list';                 // 直接打开列表抽屉，让筛选结果可见
+      this.filterDraft={
+        ratingMin:f.ratingMin, ratingMax:f.ratingMax, priceMin:null, priceMax:null,
+        tags:[...f.tags], tagsMode:'all', drafts:f.drafts, viewOnly:false,
+      };
+      this.renderCount=60;
+      this.panel='list';                 // 下钻直接打开清单，条件以 chips 回显
+      this.filterOpen=false;
       this.loadRecords();
       toast('已筛选：'+label);
     },
@@ -685,13 +1163,17 @@ const App = {
     resetFormDraft(){
       this.clearDraft();
       this.form={ id:null, name:'', rating:3, price:'', checkin:'', note:'', draft:false, lat:null, lng:null, address:'' };
+      this.releaseAllPhotoURLs();      // 恢复过的草稿可能带新选照片，清空时要一起回收
       this.formTags=[]; this.formPhotos=[]; this.formNewPhotos=[]; this.formRemoved=[];
       this.hours=parseHours(null); this.locName=''; this.locCoord=''; this.formMsg=''; this.tagInput='';
       this.$nextTick(()=>this.renderHoursEditor());
     },
-    openForm(rec){ this.moreOpen=false; this.panel='none';
+    openForm(rec){ this.moreOpen=false; this.filterOpen=false;
+      this.releaseAllPhotoURLs();      // 上一次没关干净时，先回收 Object URL
       this.pickMode=false; this.pickCb=null; this.pickingMap=false;   // 清掉可能残留的选点态
       this._suppressDraft=true;          // 初始化字段期间不要覆盖已有草稿
+      this.formMore=!!rec;               // 新建时只露必填三项，补充信息折叠
+      this.formErr={ name:'', loc:'' };
       this.form.id=rec?rec.id:null;
       this.form.name=rec?rec.name:'';
       this.form.rating=rec?rec.rating:3;
@@ -703,7 +1185,7 @@ const App = {
       this.form.lng=rec?rec.lng:null;
       this.form.address='';
       this.formTags=rec?[...(rec.tags||[])]:[];
-      this.formPhotos=rec?(rec.photos||[]).map(p=>({id:p.id,url:'/api/photos/'+p.id})):[];
+      this.formPhotos=rec?(rec.photos||[]).map(p=>({id:p.id,url:photoPath(p.id)})):[];
       this.formNewPhotos=[]; this.formRemoved=[];
       this.hours=parseHours(rec?rec.businessHours:null);
       this.locName=rec?(rec.name||'已选点'):'';
@@ -715,6 +1197,22 @@ const App = {
       this.formOpen=true;
       this.$nextTick(()=>{ this.renderHoursEditor(); this._suppressDraft=false; });
     },
+    toggleFormMore(){
+      this.formMore=!this.formMore;
+      // 营业时间编辑器是手动渲染的，展开后要补一次
+      if(this.formMore) this.$nextTick(()=>this.renderHoursEditor());
+    },
+    /* 右键/长按地图：带上坐标进入新增，填个店名就能存 */
+    onMapLongPress(lng,lat){
+      if(this.formOpen || this.pickMode) return;
+      this.openForm(null);
+      this.form.lng=lng; this.form.lat=lat;
+      this.locName='地图选点';
+      this.locCoord=`${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      this.formErr.loc='';
+      try{ MapView.tempMarker(lng,lat); }catch(e){}
+      toast('已带上位置，填个店名就能保存');
+    },
     addTag(){
       const v=this.tagInput.trim();
       if(v && !this.formTags.includes(v)) this.formTags.push(v);
@@ -722,11 +1220,16 @@ const App = {
     },
     removeTag(i){ this.formTags.splice(i,1); },
     pickPhotos(e){ for(const f of e.target.files){ if(this.formPhotos.length+this.formNewPhotos.length<9) this.formNewPhotos.push(f); } e.target.value=''; },
-    removePhoto(i,isNew){ if(isNew) this.formNewPhotos.splice(i,1); else { this.formRemoved.push(this.formPhotos[i].id); this.formPhotos.splice(i,1); } },
+    removePhoto(i,isNew){
+      if(isNew){ this.releasePhotoURL(this.formNewPhotos[i]); this.formNewPhotos.splice(i,1); }
+      else { this.formRemoved.push(this.formPhotos[i].id); this.formPhotos.splice(i,1); }
+    },
     pickOnMap(){
       // 进入选点态：表单不销毁，只收起成一条提示条（遮罩透明可穿透），
       // 这样用户始终知道"还在添加流程里"，也不会因为地图操作异常而丢掉整张表单。
       // 提示由 pick-bar 承担，不再弹 toast（toast 也在底部，会盖住提示条的取消按钮）。
+      // 清单会被收起：点选需要尽量大的地图可视区。
+      this.panel='none'; this.filterOpen=false;
       this.pickMode=true; this.pickingMap=true;
       this.pickCb=(lng,lat)=>{
         // 顺序很关键：先恢复表单状态，再动地图。地图调用即使失败也不影响表单。
@@ -741,13 +1244,14 @@ const App = {
     },
     cancelPick(){ this.pickMode=false; this.pickCb=null; this.pickingMap=false; },
     /* 关闭表单（按钮/取消/稍后再填）统一走这里，确保退出选点态 */
-    closeForm(){ if(this.pickingMap) this.cancelPick(); this.formOpen=false; },
+    closeForm(){ if(this.pickingMap) this.cancelPick(); this.formOpen=false; this.releaseAllPhotoURLs(); },
     /* 点遮罩关闭：选点态下不关；刚选完点的 500ms 内忽略（防误触、防双击）
        另外本方法也可以关闭编辑/新增表单以外的模态，由调用处决定 */
     backdropClose(){
       if(this.pickingMap) return;
       if(Date.now()-(this._pickedAt||0) < 500) return;
       this.formOpen=false;
+      this.releaseAllPhotoURLs();
     },
     async locateMe(){
       if(!navigator.geolocation){ toast('浏览器不支持定位'); return; }
@@ -901,7 +1405,7 @@ const App = {
         if(!(this.hours[k]||[]).length){ const rest=document.createElement('span'); rest.className='day-rest'; rest.textContent='休息'; slots.appendChild(rest); }
         (this.hours[k]||[]).forEach((sl,idx)=>{
           const sr=document.createElement('span'); sr.className='slot-row';
-          sr.innerHTML=`<input type="time" value="${sl.s}"><em>至</em><input type="time" value="${sl.e}"><button type="button" class="slot-del" title="删除该时段">✕</button>`;
+          sr.innerHTML=`<input type="time" value="${sl.s}"><em>至</em><input type="time" value="${sl.e}"><button type="button" class="slot-del" aria-label="删除该时段" title="删除该时段">✕</button>`;
           const ins=sr.querySelectorAll('input');
           ins[0].onchange=()=>{ this.hours[k][idx].s=normTime(ins[0].value); };
           ins[1].onchange=()=>{ this.hours[k][idx].e=normTime(ins[1].value); };
@@ -917,21 +1421,26 @@ const App = {
     },
     async saveForm(){
       if(this.saving) return;                     // 防重复提交：连点两次不会再建一条重复记录
+      this.formErr={ name:'', loc:'' };
       const name=this.form.name.trim();
-      if(!name){ this.formMsg='店名必填'; return; }
+      if(!name){ this.formErr.name='给这家店起个名字'; this.formMsg=''; return; }
       if((this.formPhotos.length+this.formNewPhotos.length)>9){ this.formMsg='照片最多 9 张'; return; }
-      if(!this.form.lat||!this.form.lng){ this.formMsg='请先在地图上点选位置'; return; }
+      // 坐标允许为 0：不能用 !lat||!lng（经度/纬度 0 是合法位置，会被误判成"没选点"）
+      const hasLoc=Number.isFinite(+this.form.lat) && Number.isFinite(+this.form.lng)
+                   && this.form.lat!=null && this.form.lng!=null;
+      if(!hasLoc){ this.formErr.loc='先选个位置：地图点选或搜索地点'; this.formMsg=''; return; }
       const body={
         name, rating:this.form.rating, lng:this.form.lng, lat:this.form.lat,
         tags:this.formTags, businessHours:serializeHours(this.hours),
-        avgPrice:this.form.price?+this.form.price:null,
+        // 0 元是有效价格（免费），不能用 truthy 判断，否则会被当成「没填」存成 null
+        avgPrice:(this.form.price===''||this.form.price==null)?null:+this.form.price,
         checkinStatus:this.form.checkin||null, note:this.form.note.trim()||null, draft:this.form.draft,
       };
       this.saving=true;
       this.formMsg='';
       try{
         let rec;
-        if(this.form.id) rec=await API.sendForm('/api/records/'+this.form.id,'PUT',body);
+        if(this.form.id) rec=await API.sendForm(recPath(this.form.id),'PUT',body);
         else{
           rec=await API.sendForm('/api/records','POST',body);
           // 立刻回填 id：记录已落库，之后任何重试都会走更新而不是新建，
@@ -941,13 +1450,13 @@ const App = {
         // 照片逐张上传/删除，失败的不丢弃，留在列表里等用户重试
         const failed=[];
         for(const f of this.formNewPhotos){
-          try{ await API.upload('/api/records/'+rec.id+'/photos',f); }
+          try{ await API.upload(recPath(rec.id)+'/photos',f); }
           catch(e){ failed.push(f); }
         }
         this.formNewPhotos=failed;
         const delFailed=[];
         for(const pid of this.formRemoved){
-          try{ await API.del('/api/photos/'+pid); }
+          try{ await API.del(photoPath(pid)); }
           catch(e){ delFailed.push(pid); }   // 删除失败要保留，否则照片仍留在库里、下次打开又冒出来
         }
         this.formRemoved=delFailed;
@@ -959,34 +1468,69 @@ const App = {
           await this.loadRecords();
           return;                                   // 保留表单与未完成项，便于重试
         }
-        toast('已保存'); this.clearDraft(); this.formOpen=false; await this.loadRecords();
+        toast('已保存', { label:'再记一家', fn:()=>this.openForm(null) });
+        this.clearDraft(); this.formOpen=false; this.releaseAllPhotoURLs(); await this.loadRecords();
         if(this.detailOpen && this.detail && this.detail.id===rec.id) this.detail=rec;
       }catch(e){ this.formMsg='保存失败：'+e.message; }
       finally{ this.saving=false; }
     },
 
     /* 导入 / 导出 */
-    openImport(){ this.moreOpen=false; this.importPreview=''; this.importReady=false; this.importFile=null; this.importOpen=true; },
+    openImport(){
+      this.moreOpen=false; this.importPreview=''; this.importReady=false; this.importFile=null;
+      this.importBusy=false; this.importPercent=0; this.importText='';
+      this.importOpen=true;
+    },
     async onImportFile(e){
       const file=e.target.files[0]; if(!file) return;
-      const fd=new FormData(); fd.append('file',file);
+      this.importBusy=true; this.importIndet=true; this.importPercent=0;
+      this.importText='正在上传备份文件…';
+      this.importPreview=''; this.importReady=false; this.importFile=null;
       try{
-        const r=await fetch('/api/import',{method:'POST',body:fd}); const j=await r.json();
-        if(j.detail){ this.importPreview='❌ '+j.detail; this.importReady=false; return; }
+        const j=await streamUpload('/api/import', file);
+        this.importIndet=false; this.importText='解析完成，确认后开始写入';
         this.importFile=file;
         const bad=(j.invalidDetails&&j.invalidDetails.length)?`；无效 ${j.invalid} 条`:'';
         this.importPreview=`预览：新增 ${j.append}，更新 ${j.update}，无效 ${j.invalid}${bad}`;
         this.importReady=true;
-      }catch(err){ this.importPreview='❌ '+err.message; this.importReady=false; }
+      }catch(err){
+        this.importIndet=false; this.importText='';
+        this.importPreview='❌ '+err.message;
+      }finally{
+        this.importBusy=false;
+      }
     },
     async doImport(){
-      if(!this.importFile) return;
-      const fd=new FormData(); fd.append('file',this.importFile);
+      if(!this.importFile || this.importBusy) return;
+      this.importBusy=true; this.importIndet=true; this.importPercent=0;
+      this.importText='正在上传备份文件…';
       try{
-        const r=await fetch('/api/import?confirm=true',{method:'POST',body:fd}); const j=await r.json();
-        toast(`导入完成：写入 ${j.written}，无效 ${j.invalid}`);
-        this.importOpen=false; this.importFile=null; await this.loadRecords();
-      }catch(e){ toast('导入失败：'+e.message); }
+        const j=await streamUpload('/api/import?confirm=true&progress=1', this.importFile, {
+          onEvent:(ev)=>{
+            if(ev.type==='start'){
+              this.importIndet=false; this.importPercent=60;
+              this.importText=`开始写入 ${ev.total} 条…`;
+            }else if(ev.type==='progress'){
+              this.importPercent=60+Math.round(ev.done/Math.max(1,ev.total)*40);
+              this.importText=`写入 ${ev.done} / ${ev.total} 条`;
+            }
+          },
+        });
+        this.importIndet=false; this.importPercent=100;
+        const skipped=j.photosSkipped?`，跳过异常照片 ${j.photosSkipped} 张`:'';
+        const kept=j.photosKept?`，${j.photosKept} 条记录保留了原有照片`:'';
+        const renamed=j.idsRenamed?`，${j.idsRenamed} 条 id 含非法字符已重建`:'';
+        this.importText=`完成：写入 ${j.written} 条${j.failed?`，失败 ${j.failed}`:''}${j.invalid?`，无效 ${j.invalid}`:''}${skipped}${kept}${renamed}`;
+        toast(`导入完成：写入 ${j.written}，无效 ${j.invalid}${skipped}${kept}${renamed}`);
+        this.importOpen=false; this.importFile=null;
+        await this.loadRecords();
+      }catch(e){
+        this.importIndet=false;
+        this.importText='导入失败：'+e.message;
+        this.importPreview='❌ '+e.message;
+      }finally{
+        this.importBusy=false;
+      }
     },
     doExport(){
       this.moreOpen=false;
@@ -997,11 +1541,20 @@ const App = {
     /* lightbox 桥接 */
     openLightbox(photos,i){ openLightbox(photos,i); },
   },
+  created(){
+    /* File -> ObjectURL 缓存。模板每次重渲染都会调 photoURL(f)，
+       每次都 createObjectURL 会持续泄漏（且 <img> 反复重新加载）。
+       放在 created 里而不是 data()：Map 不需要响应式，Vue 代理只会增加开销。 */
+    this._photoURLs=new Map();
+  },
   mounted(){
     const t=localStorage.getItem('fm-theme'); if(t) document.documentElement.setAttribute('data-theme',t);
+    this.themeName = t==='dark' ? '深色' : '浅色';
+    document.body.classList.toggle('fm-list-open', this.panel==='list');
+    this._readURL();   // 支持 ?view=list&rating=4&tags=火锅 这样的深链接
     if(localStorage.getItem('fm-show-markers')==='0') this.showMarkers=false;
     bindLightbox();
-    // 全局快捷键 & 点击外部关闭更多
+    // 全局快捷键 & 点击外部关闭浮层
     document.addEventListener('keydown',e=>{
       if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
       if($('#lightbox') && !$('#lightbox').classList.contains('hidden')){
@@ -1010,15 +1563,57 @@ const App = {
         else if(e.key==='ArrowRight') lbNav(1);
         return;
       }
-      if(e.key==='n'||e.key==='N'){ this.openForm(null); }
-      else if(e.key==='/'){ e.preventDefault(); const el=$('.drawer-search input'); if(el) el.focus(); }
-      else if(e.key==='Escape'){ if(this.confirmBox.open){ this.closeConfirm(false); return; } if(this.pickingMap){ this.cancelPick(); return; } if(this.selectMode){ this.exitSelect(); return; } this.panel='none'; this.moreOpen=false; this.settingsOpen=this.formOpen=this.detailOpen=this.dashOpen=this.importOpen=false; }
+      const modalOpen=this.formOpen||this.settingsOpen||this.dashOpen||this.importOpen||this.confirmBox.open;
+      if(!modalOpen && this.panel==='list' && (e.key==='ArrowDown'||e.key==='ArrowUp')){
+        e.preventDefault(); this._moveActive(e.key==='ArrowDown'?1:-1); return;
+      }
+      if(!modalOpen && e.key==='Enter' && this.panel==='list' && this.activeIdx>=0){
+        e.preventDefault(); this._openActive(); return;
+      }
+      if(e.key==='n'||e.key==='N'){ if(!modalOpen) this.openForm(null); }
+      else if(e.key==='/'){ e.preventDefault(); const el=$('.tb-search input'); if(el) el.focus(); }
+      else if((e.key==='f'||e.key==='F') && !modalOpen){
+        if(this.panel!=='list') this.openList();
+        this.$nextTick(()=>{ if(!this.filterOpen) this.toggleFilter(); });
+      }
+      else if(e.key==='Escape'){
+        if(this.confirmBox.open){ this.closeConfirm(false); return; }
+        if(this.pickingMap){ this.cancelPick(); return; }
+        if(this.selectMode){ this.exitSelect(); return; }
+        if(this.filterOpen){ this.filterOpen=false; return; }
+        if(this.detailOpen){ this.closeDetail(); return; }
+        this.panel='none'; this.moreOpen=false;
+        this.settingsOpen=this.formOpen=this.dashOpen=this.importOpen=false;
+      }
     });
-    document.addEventListener('click',e=>{ if(this.moreOpen && !e.target.closest('.menubar')) this.moreOpen=false; });
+    /* 空白点击：任何不在交互容器里的点击都算「点空白」。
+       用 pointerdown 的位置/时间判断，拖动地图、长按都不会误触发。 */
+    let downX=0, downY=0, downAt=0, downSnap=null;
+    document.addEventListener('pointerdown',e=>{
+      downX=e.clientX; downY=e.clientY; downAt=Date.now();
+      downSnap={ detail:this.detailOpen, filter:this.filterOpen, panel:this.panel, form:this.formOpen };
+    },true);
+    document.addEventListener('click',e=>{
+      if(this.moreOpen && !e.target.closest('.menubar')) this.moreOpen=false;
+      if(this.filterOpen && !e.target.closest('.fpop') && !e.target.closest('.fb-filter')
+         && e.target.closest('.drawer,.menubar')) this.filterOpen=false;
+      // 拖动超过 6px 或按住超过 700ms（长按）不算点击
+      if(Math.abs(e.clientX-downX)>6 || Math.abs(e.clientY-downY)>6) return;
+      if(downAt && Date.now()-downAt>700) return;
+      const t=e.target;
+      if(!t || !t.closest) return;
+      if(t.closest('.menubar,.drawer,.modal-wrap,.fpop,.more-menu,#lightbox,.toast,' +
+                  '.leaflet-marker-icon,.leaflet-control,.marker-cluster,.amap-marker,.fm-cluster,.amap-control')) return;
+      this.onMapBlankClick(downSnap);
+    });
+    // 前进/后退：按 URL 还原条件并重查
+    window.addEventListener('popstate',()=>{ this._readURL(); this.loadRecords(); });
     // 启动
     (async()=>{
       try{ await MapView.init(); }catch(e){ console.error(e); toast('地图加载失败：'+e.message); }
       if(MapView.cfg) this.mapConfig = MapView.cfg;
+      // URL 里带 viewOnly 时，等地图就绪后再取一次视野，否则 bounds 是空的
+      if(this.filters.viewOnly) this.viewBounds=MapView.getBounds();
       await this.loadRecords();
     })();
   },

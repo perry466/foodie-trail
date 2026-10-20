@@ -54,7 +54,7 @@ const ctx = {
 
 vm.createContext(ctx);
 vm.runInContext(
-  src + ';globalThis.__App=App;globalThis.__MapView=MapView;globalThis.__API=API;',
+  src + ';globalThis.__App=App;globalThis.__MapView=MapView;globalThis.__API=API;globalThis.__recPath=recPath;globalThis.__serializeHours=serializeHours;',
   ctx
 );
 
@@ -64,6 +64,7 @@ MapView.getBounds = () => ({ swLng: 100, swLat: 20, neLng: 120, neLat: 45 });
 MapView.render = (recs) => { rendered = recs; };
 
 const app = Object.assign({}, ctx.__App.data(), ctx.__App.methods);
+if (ctx.__App.created) ctx.__App.created.call(app);   // 真实的 Object URL 缓存初始化
 Object.defineProperty(app, 'visibleRecords', { get() { return this._visible(this.records); } });
 app.records = ALL.slice();
 app.loadRecords = async () => {};
@@ -141,6 +142,101 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   await app.saveForm();
   check('全部成功时清空待删除', app.formRemoved.length === 0);
   check('全部成功时表单关闭', app.formOpen === false);
+
+  // ---- 人均价位：预览与后端同为 [下限, 上限) ----
+  app.filters.keyword = '';
+  const priceFilter = (min, max) => ({
+    priceMin: min, priceMax: max, tags: [], tagsMode: 'all', ratingMin: 0, checkin: '', drafts: 'all',
+  });
+  const f3060 = priceFilter(30, 60);
+  check('30–60 含 30（下限闭）', app._matchFilters({ avgPrice: 30 }, f3060));
+  check('30–60 含 59', app._matchFilters({ avgPrice: 59 }, f3060));
+  check('30–60 不含 60（上限开）', !app._matchFilters({ avgPrice: 60 }, f3060));
+  check('30–60 不含 29', !app._matchFilters({ avgPrice: 29 }, f3060));
+  const f200 = priceFilter(200, null);
+  check('≥200 含 200', app._matchFilters({ avgPrice: 200 }, f200));
+  check('无人价不参与', !app._matchFilters({ avgPrice: null }, f3060));
+
+  // ---- 照片 Object URL：同一 File 只建一次，关闭表单时释放 ----
+  let created = 0;
+  const revoked = [];
+  ctx.URL.createObjectURL = () => 'blob:' + ++created;
+  ctx.URL.revokeObjectURL = (u) => revoked.push(u);
+  app._photoURLs = new Map();
+  const file1 = {};
+  const url1 = app.photoURL(file1);
+  const url2 = app.photoURL(file1);
+  check('photoURL 同一个 File 复用', url1 === url2 && created === 1, `created=${created}`);
+  app.releasePhotoURL(file1);
+  check('移除待上传照片后 revoke', revoked.includes(url1), JSON.stringify(revoked));
+  const file2 = {};
+  app.formNewPhotos = [file2];
+  app.photoURL(file2);
+  app.closeForm();
+  check('关闭表单释放剩余 Object URL', revoked.includes('blob:' + created) && app._photoURLs.size === 0,
+    JSON.stringify(revoked));
+
+  // ---- 经纬度为 0 是合法位置，不能被当成"没选点" ----
+  ctx.__API.sendForm = async () => ({ id: 'r0', name: '赤道店', lat: 0, lng: 0, photos: [] });
+  app.form = { id: null, name: '赤道店', rating: 3, price: '', checkin: '', note: '', draft: false, lat: 0, lng: 0, address: '' };
+  app.formErr = { name: '', loc: '' };
+  app.formPhotos = [];
+  app.formNewPhotos = [];
+  app.formRemoved = [];
+  app.hours = {};
+  app.saving = false;
+  app.formMsg = '';
+  app.formOpen = true;
+  await app.saveForm();
+  check('经纬度 0 允许保存', app.formErr.loc === '', app.formErr.loc);
+
+  // ---- 看板下钻：清掉遗留条件 + 星级是精确区间 ----
+  app.dash = { price: { buckets: [{ label: '<30', min: 0, max: 30, count: 1 }] } };
+  app.filters.keyword = '火锅';
+  app.filters.drafts = 'only';
+  app.filters.viewOnly = true;
+  app.filters.tags = ['老店'];
+  app.loadRecords = async () => {};
+  app.dashDrill('star', 4);
+  check('下钻清空关键词', app.filters.keyword === '', app.filters.keyword);
+  check('下钻改为不含草稿（与看板数字同口径）', app.filters.drafts === 'hide', app.filters.drafts);
+  check('下钻关闭仅看视野', app.filters.viewOnly === false);
+  check('下钻清空标签', app.filters.tags.length === 0);
+  check('星级下钻是精确区间', app.filters.ratingMin === 4 && app.filters.ratingMax === 4,
+    `${app.filters.ratingMin}-${app.filters.ratingMax}`);
+  const chips = ctx.__App.computed.activeChips.call(app);   // computed 不在 methods 里
+  const ratingChip = chips.find((c) => c.k === 'rating');
+  check('星级 chip 文案为精确值', ratingChip && ratingChip.t === '4 星', ratingChip && ratingChip.t);
+  check('星级下钻带 ratingMax 查询参数', /ratingMax=4/.test(app._filterQuery(true, false)),
+    app._filterQuery(true, false));
+  const f44 = Object.assign({}, app.filters);
+  check('精确星级只匹配该星级', app._matchFilters({ rating: 4, tags: [], avgPrice: null }, f44)
+    && !app._matchFilters({ rating: 5, tags: [], avgPrice: null }, f44));
+
+  // ---- 记录 id 必须编码后再拼 URL ----
+  app.filters.ratingMin = 0; app.filters.ratingMax = null;
+  check('recPath 编码斜杠', ctx.__recPath('a/b') === '/api/records/a%2Fb', ctx.__recPath('a/b'));
+
+  // ---- 0 元是有效价格，不能当成「没填」 ----
+  let lastBody = null;
+  ctx.__API.sendForm = async (url, method, body) => {
+    lastBody = body;
+    return { id: 'r0', name: 'x', photos: [], avgPrice: body.avgPrice };
+  };
+  app.form = { id: null, name: '免费店', rating: 3, price: 0, checkin: '', note: '', draft: false, lat: 39.9, lng: 116.4, address: '' };
+  app.formErr = { name: '', loc: '' };
+  app.formPhotos = []; app.formNewPhotos = []; app.formRemoved = [];
+  app.hours = {}; app.saving = false; app.formMsg = ''; app.formOpen = true;
+  await app.saveForm();
+  check('0 元不会被当成空值', lastBody && lastBody.avgPrice === 0, String(lastBody && lastBody.avgPrice));
+
+  // ---- 七天排班序列化后的长度（后端必须能接受，不能按 120 字卡） ----
+  const weekTwo = {};
+  ['mon','tue','wed','thu','fri','sat','sun'].forEach((k) => {
+    weekTwo[k] = [{ s: '11:00', e: '14:00' }, { s: '17:00', e: '21:00' }];
+  });
+  const hoursJson = ctx.__serializeHours(weekTwo);
+  check('七天两段排班 JSON 超过 120 字', hoursJson.length > 400, String(hoursJson.length));
 
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));

@@ -50,6 +50,7 @@ foodie-trail/
 │   ├── db.py             # 建表与连接管理（WAL、外键）
 │   ├── crypto.py         # 高德 Key 的 Fernet 加解密
 │   ├── coords.py         # 坐标转换与距离计算
+│   ├── validate.py       # 字段归一化与导入校验（导入/读取共用）
 │   └── pathconf.py       # 路径常量与端口探测
 ├── static/               # 前端
 │   ├── index.html        # 页面骨架与模板
@@ -63,18 +64,29 @@ foodie-trail/
 ├── requirements.txt      # 运行依赖
 ├── requirements-dev.txt  # 测试依赖
 ├── pytest.ini            # pytest 配置
-├── start.bat / start.sh  # 启动脚本
+├── setup.bat / setup.sh  # 一键创建 venv 并安装依赖
+├── start.bat / start.sh  # 启动脚本（探测依赖，失效自动回退）
 └── README.md
 ```
 
 ## 运行方式
 
-1. 准备环境与依赖：
+1. 准备环境（推荐一键脚本，会自动创建 venv 并装齐运行 + 测试依赖）：
+
+   ```bat
+   setup.bat
+   ```
+
+   ```bash
+   ./setup.sh
+   ```
+
+   手动方式：
 
    ```bash
    python -m venv venv
    venv\Scripts\activate        # Windows
-   pip install -r requirements.txt
+   pip install -r requirements.txt -r requirements-dev.txt
    ```
 
 2. 启动：
@@ -83,7 +95,7 @@ foodie-trail/
    python -m app.main
    ```
 
-   也可直接运行 `start.bat`（Windows）或 `start.sh`（Linux / macOS）。
+   也可直接运行 `start.bat`（Windows）或 `start.sh`（Linux / macOS）。启动脚本会先验证解释器能 `import fastapi, uvicorn, PIL`，venv 失效（换机器、升级/卸载过 Python）时自动回退到 `py -3` / `python`，都不可用则打印修复指引而不是直接崩掉。
 
 3. 访问：应用会在 `20000–65535` 中探测一个空闲端口，写入 `data/.last_port` 并打印在启动日志里，用浏览器打开该地址即可。
 
@@ -94,12 +106,13 @@ foodie-trail/
 ## 测试
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest tests -q      # 后端 9 个用例
-node tests/front-check.js      # 前端 15 项断言（需 Node 18+）
+python -m pytest tests -q      # 后端 99 个用例
+node tests/front-check.js      # 前端 36 项断言（需 Node 18+）
 ```
 
-Windows 下可运行 `tests\run-tests.bat` 一次跑完：退出码 0 全部通过、1 有失败、2 缺少 Node 导致前端部分跳过。测试使用临时数据目录，不会读写 `data/`。
+覆盖范围：常规 CRUD、照片上传/读取/删除、备份导出→清库→导入往返（含照片字节）、导入字段校验与畸形数据处理，以及草稿范围、密钥语义等回归点。测试使用临时数据目录（`FOODMAP_DATA_DIR`），不会读写 `data/`。
+
+Windows 下可运行 `tests\run-tests.bat` 一次跑完：退出码 0 全部通过、1 有失败、2 缺少 Node 导致前端部分跳过。
 
 ## 配置高德地图（可选）
 

@@ -4,11 +4,28 @@ REM Exit codes: 0 = all passed, 1 = failed, 2 = partially skipped (node missing)
 REM Usage: tests\run-tests.bat
 cd /d "%~dp0.."
 
-set "PY=venv\Scripts\python.exe"
-if not exist "%PY%" set "PY=python"
+REM Probe the interpreter instead of trusting venv\Scripts\python.exe to exist:
+REM a copied or half-deleted venv still has the exe but cannot import pytest.
+set "PY="
+if exist "venv\Scripts\python.exe" (
+    "venv\Scripts\python.exe" -c "import pytest" >nul 2>&1
+    if not errorlevel 1 set "PY=venv\Scripts\python.exe"
+)
+if defined PY goto runpy
 
-echo [1/2] backend (pytest)
-"%PY%" -m pytest tests -q
+py -3 -c "import pytest" >nul 2>&1
+if not errorlevel 1 set "PY=py -3"
+if defined PY goto runpy
+
+python -c "import pytest" >nul 2>&1
+if not errorlevel 1 set "PY=python"
+if defined PY goto runpy
+
+goto nopy
+
+:runpy
+echo [1/2] backend (pytest) using %PY%
+%PY% -m pytest tests -q
 if errorlevel 1 goto fail
 
 echo.
@@ -22,6 +39,12 @@ if errorlevel 1 goto fail
 echo.
 echo ALL TESTS PASSED
 exit /b 0
+
+:nopy
+echo.
+echo pytest is not available in any interpreter.
+echo Run setup.bat first to create venv and install requirements-dev.txt.
+exit /b 1
 
 :skip_front
 echo.

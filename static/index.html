@@ -2,12 +2,13 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- 不锁缩放：禁用 user-scalable 会让低视力用户无法放大，也违反 WCAG 1.4.4 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>美食地图 FoodMap</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/style.css?v=20261019c" />
 </head>
 <body>
   <!-- 地图：独立于 Vue 管控，避免重渲染破坏地图实例 -->
@@ -16,42 +17,44 @@
   <!-- Vue 接管的可交互 UI 层 -->
   <div id="ui" class="ui-root">
 
-    <!-- ===== 顶部悬浮药丸工具栏 ===== -->
+    <!-- ===== 顶部悬浮药丸工具栏：3 个视图 + 搜索/添加 + 更多 ===== -->
     <header class="menubar glass">
-      <button class="mb-item" @click="fitChina" title="回到全国">
-        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-        <span class="mb-label">美食地图</span>
+      <button class="mb-brand" @click="goHome" title="回到全国">
+        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        <span>美食地图</span>
       </button>
-      <button class="mb-item" :class="{active: panel==='list'}" @click="togglePanel('list')" title="记录列表">
-        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-        <span class="mb-label">记录</span>
+
+      <nav class="mb-seg">
+        <button :class="{on: panel!=='list' && !dashOpen}" @click="goMap">地图</button>
+        <button :class="{on: panel==='list'}" @click="openList">清单<em v-if="visibleRecords.length">{{ visibleRecords.length }}</em></button>
+        <button :class="{on: dashOpen}" @click="openDash">看板</button>
+      </nav>
+
+      <label class="tb-search" title="搜索（/）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" v-model="filters.keyword" @input="onSearch" placeholder="搜索店名 / 备注 / 标签" />
+      </label>
+
+      <button class="mb-add" @click="openForm(null)" title="添加记录（N）">
+        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>添加</span>
       </button>
-      <button class="mb-item" :class="{active: panel==='filter'}" @click="togglePanel('filter')" title="筛选">
-        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-        <span class="mb-label">筛选</span>
-      </button>
-      <button class="mb-item" @click="openDash" title="数据看板">
-        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
-        <span class="mb-label">看板</span>
-      </button>
-      <button class="mb-item" @click="openSettings" title="设置">
-        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        <span class="mb-label">设置</span>
-      </button>
-      <span class="mb-sep"></span>
-      <button class="mb-add" @click="openForm(null)" title="添加记录">
-        <svg class="mb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span class="mb-label">添加</span>
-      </button>
+
       <button class="mb-more" @click.stop="moreOpen=!moreOpen" title="更多">
-        <svg class="mb-ico" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        <svg class="mb-ico" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
       </button>
       <transition name="pop">
         <div v-if="moreOpen" class="more-menu glass" @click.stop>
+          <div class="more-label">视图</div>
           <button class="more-item" @click="toggleTheme">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            主题切换
+            主题：{{ themeName }}
           </button>
+          <button class="more-item" @click.stop="setShowMarkers(!showMarkers); moreOpen=false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            地图描点：{{ showMarkers ? '显示' : '隐藏' }}
+          </button>
+          <div class="more-label">数据</div>
           <button class="more-item" @click="openImport">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             导入备份
@@ -60,153 +63,265 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             导出备份（含草稿）
           </button>
-          <span class="more-divider"></span>
-          <button class="more-item more-item--danger" @click="enterSelect">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-            批量删除
+          <div class="more-label">管理</div>
+          <button class="more-item" @click.stop="enterSelect">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            批量管理
+          </button>
+          <button class="more-item" @click="openSettings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            设置 · 高德 Key
           </button>
         </div>
       </transition>
     </header>
 
-    <!-- 抽屉遮罩（点击关闭） -->
-    <transition name="fade">
-      <div v-if="panel!=='none'" class="scrim" @click="closePanel"></div>
-    </transition>
+    <!-- 不再用全屏遮罩：清单要与地图并存，遮罩会挡住地图拖动/缩放。
+         关闭清单靠右上角 ✕ 或 Esc；点地图空白只关闭详情。 -->
 
-    <!-- ===== 记录抽屉（左侧滑出） ===== -->
+    <!-- ===== 清单抽屉（列表 + 筛选合为一体） ===== -->
     <transition name="drawer">
       <aside v-if="panel==='list'" class="drawer drawer-left">
         <div class="drawer-head">
-          <h3>记录</h3>
-          <span class="drawer-sub">{{ listTotal }} 条</span>
-          <button class="drawer-batch" v-if="!selectMode && listTotal" @click="enterSelect">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-            批量删除
+          <h3>我的清单</h3>
+          <span class="drawer-sub">{{ visibleRecords.length }} 家</span>
+          <button class="drawer-batch" v-if="!selectMode && visibleRecords.length" @click.stop="enterSelect">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            批量管理
           </button>
-          <button class="drawer-close" @click="closePanel">✕</button>
+          <button class="drawer-close" aria-label="关闭清单" title="关闭清单" @click="closePanel">✕</button>
         </div>
-        <div class="drawer-search">
-          <input class="search" v-model="filters.keyword" @input="onSearch" placeholder="搜索店名/备注/标签…  ( / )" />
-          <select class="sort" v-model="filters.sort" @change="loadRecords">
-            <option value="updatedAt:desc">最近添加</option>
-            <option value="rating:desc">评分高</option>
-            <option value="name:asc">店名</option>
-            <option value="avgPrice:desc">人均高</option>
-          </select>
+
+        <!-- 常驻筛选栏：单值即时生效 -->
+        <div class="filterbar">
+          <div class="fb-row">
+            <button class="chip" :class="{on: filters.checkin===''}" @click="setCheckin('')">全部</button>
+            <button class="chip" :class="{on: filters.checkin==='want'}" @click="setCheckin('want')">想去</button>
+            <button class="chip" :class="{on: filters.checkin==='visited'}" @click="setCheckin('visited')">去过</button>
+            <button class="chip" :class="{on: filters.checkin==='favorite'}" @click="setCheckin('favorite')">收藏</button>
+            <button class="fb-filter" :class="{has: activeFilterCount}" @click.stop="toggleFilter" title="筛选（F）">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>
+              筛选<span class="badge" v-if="activeFilterCount">{{ activeFilterCount }}</span>
+            </button>
+          </div>
+          <div class="fb-row fb-sub">
+            <span class="fb-lbl">排序</span>
+            <select class="sortsel" v-model="filters.sort" @change="loadRecords">
+              <option value="updatedAt:desc">最近更新</option>
+              <option value="rating:desc">评分最高</option>
+              <option value="avgPrice:asc">人均最低</option>
+              <option value="name:asc">店名</option>
+            </select>
+            <span class="fb-count">
+              共 <b>{{ visibleRecords.length }}</b> 家
+              <template v-if="activeFilterCount"> · 已筛 {{ activeFilterCount }} 项</template>
+            </span>
+          </div>
+          <div class="act-chips" v-if="activeFilterCount">
+            <span class="act-chip" v-for="c in activeChips" :key="c.k">{{ c.t }}<button title="移除该条件" @click="removeChip(c.k)">✕</button></span>
+            <button class="clear-all" @click="clearFilters">清除全部</button>
+          </div>
+        <!-- 筛选面板：草稿态，点「应用」才生效 -->
+        <transition name="pop">
+          <div v-if="filterOpen" class="fpop" @click.stop>
+            <div class="fpop-scroll">
+              <section class="fsec">
+                <div class="fsec-h">星级<small>下限，避免只能单选</small></div>
+                <div class="chips-row">
+                  <button class="fchip" :class="{on: filterDraft.ratingMin===0 && !filterDraft.ratingMax}" @click="filterDraft.ratingMin=0; filterDraft.ratingMax=null">不限</button>
+                  <button v-for="n in 5" :key="n" class="fchip" :class="{on: filterDraft.ratingMin===n && !filterDraft.ratingMax}" @click="filterDraft.ratingMin=n; filterDraft.ratingMax=null">≥{{ n }} 星</button>
+                  <!-- 看板下钻会带入「精确星级」，用一个可取消的 chip 说明当前状态 -->
+                  <button v-if="filterDraft.ratingMax" class="fchip on" title="取消精确星级" @click="filterDraft.ratingMin=0; filterDraft.ratingMax=null">精确 {{ filterDraft.ratingMin }} 星 ✕</button>
+                </div>
+              </section>
+
+              <section class="fsec">
+                <div class="fsec-h">人均<small>无人均的记录不参与</small></div>
+                <div class="chips-row">
+                  <button class="fchip" :aria-pressed="filterDraft.priceMin===null && filterDraft.priceMax===null" :class="{on: filterDraft.priceMin===null && filterDraft.priceMax===null}" @click="setDraftPrice(null)">不限</button>
+                  <button v-for="(b,i) in priceBuckets" :key="b.label" class="fchip" :aria-pressed="filterDraft.priceMin===b.min && filterDraft.priceMax===b.max" :class="{on: filterDraft.priceMin===b.min && filterDraft.priceMax===b.max}" @click="setDraftPrice(i)">{{ b.label }}</button>
+                </div>
+              </section>
+
+              <section class="fsec">
+                <div class="fsec-h">标签
+                  <span class="tagmode" v-if="filterDraft.tags.length>1">
+                    <button :class="{on: filterDraft.tagsMode==='all'}" @click="filterDraft.tagsMode='all'">全部满足</button>
+                    <button :class="{on: filterDraft.tagsMode==='any'}" @click="filterDraft.tagsMode='any'">任一满足</button>
+                  </span>
+                  <small v-else>选多个时可切换「任一 / 全部」</small>
+                </div>
+                <input class="tag-search" v-if="allTags.length>10" v-model="tagQuery" placeholder="搜索标签…" />
+                <div class="chips-row">
+                  <button v-for="t in filteredTags" :key="t.t" class="fchip" :aria-pressed="filterDraft.tags.includes(t.t)" :class="{on: filterDraft.tags.includes(t.t)}" @click="toggleDraftTag(t.t)">{{ t.t }}<span class="n">{{ t.c }}</span></button>
+                  <span class="fsec-empty" v-if="!filteredTags.length">没有匹配的标签</span>
+                </div>
+              </section>
+
+              <section class="fsec">
+                <div class="fsec-h">草稿<small>列表与地图同范围</small></div>
+                <div class="chips-row">
+                  <button class="fchip" :class="{on: filterDraft.drafts==='all'}" @click="filterDraft.drafts='all'">含草稿</button>
+                  <button class="fchip" :class="{on: filterDraft.drafts==='hide'}" @click="filterDraft.drafts='hide'">不含草稿</button>
+                  <button class="fchip" :class="{on: filterDraft.drafts==='only'}" @click="filterDraft.drafts='only'">仅草稿</button>
+                </div>
+              </section>
+
+              <section class="fsec" style="margin-bottom:6px">
+                <div class="fsec-h">更多<small>开启后随地图移动自动更新</small></div>
+                <div class="chips-row">
+                  <button class="fchip" :class="{on: filterDraft.viewOnly}" @click="filterDraft.viewOnly=!filterDraft.viewOnly">
+                    仅看当前视野
+                  </button>
+                </div>
+              </section>
+            </div>
+            <div class="fpop-foot">
+              <button class="btn-ghost" @click="resetDraftFilter">重置</button>
+              <span class="fpop-count">符合 <b>{{ filterDraftCount }}</b> 家</span>
+              <button class="btn-primary" @click="applyFilter">应用</button>
+            </div>
+          </div>
+        </transition>
         </div>
+
         <div class="sel-tools" v-if="selectMode">
           <button class="sel-link" @click="selectAll">全选</button>
           <span class="sel-sep">·</span>
           <button class="sel-link" @click="invertSelect">反选</button>
           <span class="sel-sep">·</span>
           <button class="sel-link" @click="clearSelect">清空</button>
-          <span class="sel-hint">已选 <b>{{ selectedIds.length }}</b> / {{ listTotal }}</span>
+          <span class="sel-hint">已选 <b>{{ selectedIds.length }}</b> / {{ visibleRecords.length }}</span>
         </div>
-        <ul class="rec-list">
-          <li v-for="r in pagedRecords" :key="r.id" class="rec-card" :class="{sel: selectMode && isSelected(r.id)}" @click="selectMode ? toggleSelect(r.id) : showDetail(r.id)">
+
+        <ul class="rec-list" @scroll.passive="onListScroll">
+          <li v-for="(r,i) in pagedRecords" :key="r.id" :data-rid="r.id" class="rec-card" :class="{sel: selectMode && isSelected(r.id), on: activeIdx===i || (detailOpen && detail && detail.id===r.id)}" @mouseenter="activeIdx=i; mapHover(r)" @mouseleave="mapLeave" @click="selectMode ? toggleSelect(r.id) : showDetail(r.id)">
             <span class="rec-check" v-if="selectMode" :class="{on: isSelected(r.id)}" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             </span>
-            <img v-if="r.photos && r.photos.length" :src="'/api/photos/'+r.photos[0].id" class="rec-thumb" alt="" />
-            <div v-else class="rec-thumb rec-thumb--empty"></div>
+            <img v-if="r.cover" :src="photoSrc(r.cover)" class="rec-thumb" alt="" loading="lazy" />
+            <div v-else class="rec-thumb rec-thumb--empty" :class="'rt-'+r.checkinStatus">{{ (r.name||'?').slice(0,1) }}</div>
             <div class="rec-body">
               <div class="rec-name">{{ r.name }}<span v-if="r.draft" class="rec-draft">草稿</span></div>
               <div class="rec-meta">
                 <span class="rec-star">{{ '★'.repeat(r.rating) }}<span class="rec-star-off">{{ '★'.repeat(5-r.rating) }}</span></span>
-                <span v-if="statusOf(r)" class="badge" :class="'badge--'+r.checkinStatus">{{ statusOf(r) }}</span>
                 <span v-if="r.avgPrice!=null" class="rec-price">人均¥{{ r.avgPrice }}</span>
+                <span v-if="statusOf(r)" class="badge" :class="'badge--'+r.checkinStatus">{{ statusOf(r) }}</span>
               </div>
               <div v-if="r.tags && r.tags.length" class="rec-tags">
                 <span v-for="t in r.tags.slice(0,3)" class="tag">{{ t }}</span>
               </div>
             </div>
+            <div class="rec-acts" v-if="!selectMode" @click.stop>
+              <button class="rec-act" title="在地图上定位" @click="locateRecord(r)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              </button>
+              <button class="rec-act" title="标记为去过" :disabled="r.checkinStatus==='visited'" @click="markVisited(r)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </button>
+              <button class="rec-act" title="编辑" @click="editRecord(r)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              </button>
+            </div>
           </li>
         </ul>
-        <div class="pager" v-if="pages>1">
-          <button class="pg-btn" :disabled="page===1" @click="goto(page-1)">上一页</button>
-          <span>{{ page }} / {{ pages }}</span>
-          <button class="pg-btn" :disabled="page===pages" @click="goto(page+1)">下一页</button>
+
+        <!-- 空状态：区分「一条都没有」和「筛没了」 -->
+        <div class="empty-state" v-if="!visibleRecords.length">
+          <div class="es-ico">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          </div>
+          <template v-if="hasActiveFilters">
+            <h4>没有符合条件的记录</h4>
+            <p>试试放宽星级、去掉一个标签，或换一个关键词。</p>
+            <button class="btn-ghost" @click="clearFilters">清除全部筛选</button>
+          </template>
+          <template v-else>
+            <h4>还没有记录</h4>
+            <p>从地图上长按一个位置，或点右上角「添加」记下第一家。</p>
+            <button class="btn-primary" @click="openForm(null)">添加第一条</button>
+          </template>
+        </div>
+
+        <div class="list-more" v-if="visibleRecords.length && renderCount<visibleRecords.length">
+          已显示 {{ renderCount }} / {{ visibleRecords.length }} 家，继续向下滚动加载
         </div>
         <div class="sel-bar" v-if="selectMode">
           <span class="sel-warn">删除后不可恢复</span>
           <button class="btn-danger sel-del" :disabled="!selectedIds.length" @click="batchDelete">删除所选<span v-if="selectedIds.length">（{{ selectedIds.length }}）</span></button>
-          <button class="sel-link sel-cancel" @click="exitSelect">取消</button>
+          <button class="sel-link sel-cancel" @click.stop="exitSelect">取消</button>
         </div>
+
+
       </aside>
     </transition>
 
-    <!-- ===== 筛选抽屉（左侧滑出） ===== -->
-    <transition name="drawer">
-      <aside v-if="panel==='filter'" class="drawer drawer-left">
-        <div class="drawer-head">
-          <h3>筛选</h3>
-          <button class="drawer-close" @click="closePanel">✕</button>
-        </div>
-        <div class="drawer-body">
-          <section class="fsec">
-            <div class="fsec-title">星级</div>
-            <div class="chips-row">
-              <button v-for="n in 5" class="pill" :class="{on: filters.rating===n}" @click="toggleStar(n)">★ {{ n }}</button>
-              <button class="pill" :class="{on: filters.rating===0}" @click="setStar(0)">全部</button>
-            </div>
-          </section>
-          <section class="fsec">
-            <div class="fsec-title">标签（可多选）</div>
-            <div class="chips-row">
-              <button v-for="t in allTags" class="pill" :class="{on: filters.tags.includes(t.t)}" @click="toggleTag(t.t)">{{ t.t }}</button>
-            </div>
-          </section>
-          <section class="fsec">
-            <div class="fsec-title">打卡状态</div>
-            <div class="chips-row">
-              <button class="pill" :class="{on: filters.checkin===''}" @click="setCheckin('')">全部</button>
-              <button class="pill" :class="{on: filters.checkin==='want'}" @click="setCheckin('want')">想去</button>
-              <button class="pill" :class="{on: filters.checkin==='visited'}" @click="setCheckin('visited')">去过</button>
-              <button class="pill" :class="{on: filters.checkin==='favorite'}" @click="setCheckin('favorite')">收藏</button>
-            </div>
-            <label class="check-line"><input type="checkbox" v-model="filters.viewOnly" @change="onViewOnly" /> 仅看视野内</label>
-          </section>
-          <section class="fsec">
-            <div class="fsec-title">草稿</div>
-            <div class="chips-row">
-              <button class="pill" :class="{on: filters.drafts==='all'}" @click="setDrafts('all')">含草稿<span class="pill-n" v-if="draftCount">{{ draftCount }}</span></button>
-              <button class="pill" :class="{on: filters.drafts==='hide'}" @click="setDrafts('hide')">不含草稿</button>
-              <button class="pill" :class="{on: filters.drafts==='only'}" @click="setDrafts('only')">仅草稿</button>
-            </div>
-          </section>
-        </div>
-        <div class="drawer-foot">
-          <span class="drawer-count">{{ listTotal }} 条结果</span>
-          <button class="btn-ghost" @click="resetFilter">重置筛选</button>
-        </div>
-      </aside>
-    </transition>
-
-    <!-- ===== 详情抽屉（右侧滑出） ===== -->
+    <!-- ===== 详情抽屉（右侧滑出）：信息 + 操作台 ===== -->
     <transition name="drawer-right">
       <aside v-if="detailOpen" class="drawer drawer-right">
         <div class="drawer-head">
-          <h3>{{ detail ? detail.name : '' }}</h3>
-          <button class="drawer-close" @click="detailOpen=false">✕</button>
+          <h3>详情</h3>
+          <button class="drawer-close" aria-label="关闭详情" title="关闭详情" @click="detailOpen=false">✕</button>
         </div>
         <div class="drawer-body" v-if="detail">
-          <div class="d-gallery" v-if="detail.photos && detail.photos.length">
-            <img v-for="(p,i) in detail.photos" :key="p.id" class="d-thumb" :src="'/api/photos/'+p.id" @click="openLightbox(detail.photos, i)" alt="" />
+          <div class="d-gallery" :class="{single: detail.photos.length===1}" v-if="detail.photos && detail.photos.length">
+            <img v-for="(p,i) in detail.photos" :key="p.id" class="d-thumb" :src="photoSrc(p.id)" @click="openLightbox(detail.photos, i)" alt="" />
           </div>
-          <div class="d-row"><b>星级</b><span class="rec-star">{{ '★'.repeat(detail.rating) }}<span class="rec-star-off">{{ '★'.repeat(5-detail.rating) }}</span></span></div>
-          <div class="d-row"><b>坐标</b><span>{{ detail.lat.toFixed(5) }}, {{ detail.lng.toFixed(5) }}</span></div>
-          <div class="d-row" v-if="detail.avgPrice!=null"><b>人均</b><span>¥{{ detail.avgPrice }}</span></div>
-          <div class="d-row" v-if="detail.businessHours"><b>营业</b><span>{{ fmtHours(detail.businessHours) }}</span></div>
-          <div class="d-row" v-if="statusOf(detail)"><b>状态</b><span>{{ statusOf(detail) }}</span></div>
+
+          <div class="d-title">{{ detail.name }}<span v-if="detail.draft" class="rec-draft">草稿</span></div>
+          <div class="d-sub">
+            <span class="rec-star">{{ '★'.repeat(detail.rating) }}<span class="rec-star-off">{{ '★'.repeat(5-detail.rating) }}</span></span>
+            <span v-if="detail.avgPrice!=null">人均 ¥{{ detail.avgPrice }}</span>
+            <span v-if="statusOf(detail)" class="badge" :class="'badge--'+detail.checkinStatus">{{ statusOf(detail) }}</span>
+          </div>
+
+          <!-- 状态一键切换：不必进编辑表单 -->
+          <div class="d-state">
+            <button :class="{on: detail.checkinStatus==='want'}" @click="setDetailStatus('want')">想去</button>
+            <button :class="{on: detail.checkinStatus==='visited'}" @click="setDetailStatus('visited')">去过</button>
+            <button :class="{on: detail.checkinStatus==='favorite'}" @click="setDetailStatus('favorite')">收藏</button>
+          </div>
+
+          <div class="d-acts">
+            <button @click="navTo(detail)" title="在高德地图中打开">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
+              导航
+            </button>
+            <button @click="setDetailStatus('visited')" :disabled="detail.checkinStatus==='visited'" title="标记为去过">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              打卡
+            </button>
+            <button @click="editRecord(detail)" title="编辑这条记录">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              编辑
+            </button>
+          </div>
+
+          <div class="d-info">
+            <div class="d-irow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              <span class="k">位置</span>
+              <span class="v">{{ detail.lat.toFixed(4) }}, {{ detail.lng.toFixed(4) }}</span>
+            </div>
+            <div class="d-irow" v-if="detail.businessHours">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              <span class="k">营业</span>
+              <span class="v">{{ fmtHours(detail.businessHours) }}</span>
+            </div>
+            <div class="d-irow" v-if="detail.note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+              <span class="k">备注</span>
+              <span class="v">{{ detail.note }}</span>
+            </div>
+          </div>
+
           <div class="d-tags" v-if="detail.tags && detail.tags.length">
             <span v-for="t in detail.tags" class="tag">{{ t }}</span>
           </div>
-          <div class="d-row d-note" v-if="detail.note"><b>备注</b><span>{{ detail.note }}</span></div>
-          <div class="d-actions">
-            <button class="btn-ghost" @click="openForm(detail)">编辑</button>
-            <button class="btn-danger" @click="deleteDetail">删除</button>
-          </div>
+        </div>
+        <div class="d-foot" v-if="detail">
+          <button class="btn-primary" @click="editRecord(detail)">编辑记录</button>
+          <button class="btn-ghost d-del" @click="deleteDetail">删除</button>
         </div>
       </aside>
     </transition>
@@ -241,7 +356,7 @@
     <transition name="modal">
       <div v-if="settingsOpen" class="modal-wrap" @click.self="settingsOpen=false">
         <div class="modal-card">
-          <div class="modal-head"><h3>设置 · 高德 Key</h3><button class="drawer-close" @click="settingsOpen=false">✕</button></div>
+          <div class="modal-head"><h3>设置 · 高德 Key</h3><button class="drawer-close" aria-label="关闭设置" title="关闭设置" @click="settingsOpen=false">✕</button></div>
           <div class="modal-body">
             <p class="hint" style="margin-top:0">高德 Key 仅存于本地数据库（Fernet 加密）。个人实名免费。需申请两种 Key：</p>
             <div class="settings-group">
@@ -263,7 +378,7 @@
                   <div class="switch-name">在地图上显示美食描点</div>
                   <p class="hint" style="margin:2px 0 0">关闭后地图只显示底图，不显示记录标记（设置会记住）。</p>
                 </div>
-                <button class="switch" :class="{on: showMarkers}" role="switch" :aria-checked="showMarkers" :aria-pressed="showMarkers" @click="setShowMarkers(!showMarkers)"></button>
+                <button class="switch" :class="{on: showMarkers}" role="switch" aria-label="在地图上显示美食描点" :aria-checked="showMarkers" :aria-pressed="showMarkers" @click="setShowMarkers(!showMarkers)"></button>
               </div>
             </div>
             <div class="row" style="display:flex; gap:10px">
@@ -277,29 +392,33 @@
       </div>
     </transition>
 
-    <!-- ===== 添加 / 编辑表单模态 ===== -->
+    <!-- ===== 添加 / 编辑表单：右侧半屏，地图保持可见 ===== -->
     <transition name="modal">
-      <div v-if="formOpen" class="modal-wrap" :class="{picking:pickingMap}" @click.self="backdropClose">
-        <div class="modal-card">
+      <div v-if="formOpen" class="modal-wrap form-sheet" :class="{picking:pickingMap}" @click.self="backdropClose">
+        <div class="modal-card form-card">
           <div class="pick-bar" v-if="pickingMap">
             <span class="pick-dot"></span>
             <span class="pick-text">在地图上点击选择位置</span>
             <button type="button" class="pick-cancel" @click.stop="cancelPick">取消</button>
           </div>
-          <div class="modal-head"><h3>{{ form.id ? '编辑美食记录' : '添加美食记录' }}</h3><button class="drawer-close" @click="closeForm">✕</button></div>
+          <div class="modal-head"><h3>{{ form.id ? '编辑美食记录' : '添加美食记录' }}</h3><button class="drawer-close" aria-label="关闭表单" title="关闭表单" @click="closeForm">✕</button></div>
           <div class="draft-bar" v-if="!form.id && draftNotice">
             <span>{{ draftNotice }}</span>
             <button type="button" class="sel-link" @click="resetFormDraft">清空重填</button>
           </div>
           <div class="modal-body">
             <div class="form-grid">
-              <label class="field"><span class="lbl">店名 *</span><input type="text" v-model="form.name" maxlength="50" placeholder="如：全聚德" /></label>
+              <label class="field full" :class="{err: formErr.name}">
+                <span class="lbl">店名 *</span>
+                <input type="text" v-model="form.name" maxlength="50" placeholder="如：全聚德" :class="{bad: formErr.name}" @input="formErr.name=''" />
+                <span class="ferr" v-if="formErr.name">{{ formErr.name }}</span>
+              </label>
+
               <label class="field"><span class="lbl">星级</span>
                 <span class="star-pick">
                   <span v-for="v in 5" :key="v" :class="{on: v<=form.rating}" @click="form.rating=v" style="cursor:pointer">★</span>
                 </span>
               </label>
-              <label class="field"><span class="lbl">人均(元)</span><input type="number" min="0" v-model="form.price" placeholder="可选" /></label>
               <label class="field"><span class="lbl">打卡状态</span>
                 <select v-model="form.checkin">
                   <option value="">无</option>
@@ -308,23 +427,9 @@
                   <option value="favorite">收藏</option>
                 </select>
               </label>
-              <label class="field full"><span class="lbl">营业时间（按周设置时段）</span><div id="hoursEditor" class="hours-editor"></div></label>
-              <label class="field full"><span class="lbl">标签（回车添加）</span>
-                <div class="tag-box">
-                  <span v-for="(t,i) in formTags" class="tag-pill">{{ t }} <b @click="removeTag(i)" style="cursor:pointer">✕</b></span>
-                </div>
-                <input type="text" v-model="tagInput" @keydown.enter.prevent="addTag" placeholder="输入后回车，如 火锅" />
-              </label>
-              <label class="field full"><span class="lbl">备注</span><textarea v-model="form.note" maxlength="500" rows="2" placeholder="推荐菜、体验…"></textarea></label>
-              <label class="field full"><span class="lbl">照片（≤9，可拖拽/粘贴）</span>
-                <div class="photo-grid">
-                  <div v-for="(p,i) in formPhotos" :key="'e'+p.id" class="photo-cell"><img :src="p.url" /><button class="del" @click="removePhoto(i,false)">✕</button></div>
-                  <div v-for="(f,i) in formNewPhotos" :key="'n'+i" class="photo-cell"><img :src="photoURL(f)" /><button class="del" @click="removePhoto(i,true)">✕</button></div>
-                </div>
-                <input type="file" accept="image/*" multiple hidden ref="photoInput" @change="pickPhotos" />
-                <button type="button" class="btn-ghost" @click="$refs.photoInput.click()">选择照片</button>
-              </label>
-              <label class="field full"><span class="lbl">位置</span>
+
+              <label class="field full" :class="{err: formErr.loc}">
+                <span class="lbl">位置 *</span>
                 <div class="loc-box">
                   <!-- 当前已选位置 -->
                   <div class="loc-head" :class="{ empty: !locName }">
@@ -370,8 +475,43 @@
                     <div class="poi-foot" v-if="poiList.length">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
                   </div>
                 </div>
-                <label class="check-line" style="margin-top:10px"><input type="checkbox" v-model="form.draft" /> 存为草稿（未完成）</label>
+                <span class="ferr" v-if="formErr.loc">{{ formErr.loc }}</span>
               </label>
+
+              <!-- 补充信息：新建时默认收起，三项必填就能先存 -->
+              <div class="field full form-more">
+                <button type="button" class="more-toggle" @click="toggleFormMore">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :style="{transform: formMore?'rotate(90deg)':'none'}"><polyline points="9 18 15 12 9 6"/></svg>
+                  补充信息
+                  <small>人均、营业时间、标签、照片、备注</small>
+                  <em>{{ formMore ? '收起' : '展开' }}</em>
+                </button>
+              </div>
+
+              <template v-if="formMore">
+                <label class="field"><span class="lbl">人均(元)</span><input type="number" min="0" v-model="form.price" placeholder="可选" /></label>
+                <label class="field"><span class="lbl">存为草稿</span>
+                  <label class="check-line" style="margin-top:6px"><input type="checkbox" v-model="form.draft" /> 还没去过/信息不全</label>
+                </label>
+                <label class="field full"><span class="lbl">营业时间（按周设置时段）</span><div id="hoursEditor" class="hours-editor"></div></label>
+                <label class="field full"><span class="lbl">标签（回车添加）</span>
+                  <div class="tag-box">
+                    <span v-for="(t,i) in formTags" class="tag-pill">{{ t }} <b @click="removeTag(i)" style="cursor:pointer">✕</b></span>
+                  </div>
+                  <input type="text" v-model="tagInput" @keydown.enter.prevent="addTag" placeholder="输入后回车，如 火锅" />
+                </label>
+                <label class="field full"><span class="lbl">备注</span><textarea v-model="form.note" maxlength="500" rows="2" placeholder="推荐菜、体验…"></textarea></label>
+                <label class="field full"><span class="lbl">照片（≤9，可拖拽/粘贴）</span>
+                  <div class="photo-grid">
+                    <div v-for="(p,i) in formPhotos" :key="'e'+p.id" class="photo-cell"><img :src="p.url" /><button class="del" aria-label="删除这张照片" title="删除这张照片" @click="removePhoto(i,false)">✕</button></div>
+                    <div v-for="(f,i) in formNewPhotos" :key="'n'+i" class="photo-cell"><img :src="photoURL(f)" /><button class="del" aria-label="移除这张待上传照片" title="移除这张待上传照片" @click="removePhoto(i,true)">✕</button></div>
+                  </div>
+                  <input type="file" accept="image/*" multiple hidden ref="photoInput" @change="pickPhotos" />
+                  <button type="button" class="btn-ghost" @click="$refs.photoInput.click()">选择照片</button>
+                </label>
+              </template>
+
+              <p class="form-tip" v-if="!formMore">有店名和位置就能先存下来，人均、标签、照片可以之后再补。</p>
             </div>
           </div>
           <div class="modal-foot">
@@ -392,7 +532,7 @@
             <span class="dash-sub" v-if="dash && dash.total">
               覆盖 {{ dash.regions }} 个区域 · {{ dash.photos.total }} 张照片 · 最近录入 {{ dash.lastAddedDays===null||dash.lastAddedDays===undefined ? '—' : dash.lastAddedDays+' 天前' }}
             </span>
-            <button class="drawer-close" @click="dashOpen=false">✕</button>
+            <button class="drawer-close" aria-label="关闭看板" title="关闭看板" @click="dashOpen=false">✕</button>
           </div>
           <div class="modal-body dash-body" v-if="dash">
 
@@ -521,14 +661,19 @@
 
               <!-- 数据健康度 -->
               <section class="dash-panel">
-                <h4>数据健康度 <small>这些字段补齐后统计更准</small></h4>
+                <h4>数据健康度 <small>共 {{ dash.total }} 条正式记录</small></h4>
                 <div class="q-chips">
-                  <span class="q-chip" :class="{zero: !dash.quality.noPrice}">缺人均<b>{{ dash.quality.noPrice }}</b></span>
-                  <span class="q-chip" :class="{zero: !dash.quality.noTags}">无标签<b>{{ dash.quality.noTags }}</b></span>
-                  <span class="q-chip" :class="{zero: !dash.quality.noNote}">无备注<b>{{ dash.quality.noNote }}</b></span>
-                  <span class="q-chip" :class="{zero: !dash.quality.noPhoto}">无照片<b>{{ dash.quality.noPhoto }}</b></span>
+                  <span class="q-chip" :class="{zero: !dash.quality.noPrice}" title="影响价位筛选与价位分布">缺人均<b>{{ dash.quality.noPrice }}</b></span>
+                  <span class="q-chip soft" :class="{zero: !dash.quality.noTags}">无标签<b>{{ dash.quality.noTags }}</b></span>
+                  <span class="q-chip soft" :class="{zero: !dash.quality.noNote}">无备注<b>{{ dash.quality.noNote }}</b></span>
+                  <span class="q-chip soft" :class="{zero: !dash.quality.noPhoto}">无照片<b>{{ dash.quality.noPhoto }}</b></span>
                 </div>
-                <p class="dash-tip">有照片的记录 {{ dash.photos.records }} 条，占 {{ dash.photos.pct }}%；共 {{ dash.photos.total }} 张照片。</p>
+                <p class="dash-tip" v-if="dash.photos.total">
+                  有照片的记录 {{ dash.photos.records }} 条（占 {{ dash.photos.pct }}%），共 {{ dash.photos.total }} 张照片。
+                </p>
+                <p class="dash-tip" v-else>
+                  还没有照片。补几张后，清单缩略图和详情会更直观；照片只影响展示，不影响上面的统计。
+                </p>
               </section>
             </template>
           </div>
@@ -540,11 +685,17 @@
     <transition name="modal">
       <div v-if="importOpen" class="modal-wrap" @click.self="importOpen=false">
         <div class="modal-card">
-          <div class="modal-head"><h3>导入备份</h3><button class="drawer-close" @click="importOpen=false">✕</button></div>
+          <div class="modal-head"><h3>导入备份</h3><button class="drawer-close" aria-label="关闭导入" title="关闭导入" @click="importOpen=false">✕</button></div>
           <div class="modal-body">
-            <input type="file" accept="application/json" @change="onImportFile" />
+            <input type="file" accept="application/json,.json" @change="onImportFile" :disabled="importBusy" />
+            <div class="imp-progress" v-if="importBusy || importPercent>0">
+              <div class="imp-track" :class="{ind: importIndet}"><i :style="{width: importIndet ? '100%' : importPercent+'%'}"></i></div>
+              <div class="imp-text"><span>{{ importText }}</span><b v-if="!importIndet">{{ importPercent }}%</b></div>
+            </div>
             <div class="form-msg" style="margin-top:10px">{{ importPreview }}</div>
-            <button class="btn-primary" style="margin-top:12px" :disabled="!importReady" @click="doImport">确认导入</button>
+            <button class="btn-primary" style="margin-top:12px" :disabled="!importReady || importBusy" @click="doImport">
+              {{ importBusy ? '导入中…' : '确认导入' }}
+            </button>
           </div>
         </div>
       </div>
@@ -562,6 +713,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js"></script>
+  <script src="/js/app.js?v=20261019c"></script>
 </body>
 </html>

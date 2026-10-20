@@ -57,6 +57,10 @@ def init_db() -> None:
             "INSERT OR IGNORE INTO meta(key,value) VALUES('dbVersion', ?)",
             (str(DB_VERSION),),
         )
+        # 一次性把老数据里的 `photos\x.jpg` 归一成 `photos/x.jpg`（幂等）。
+        # 用 char(92) 表示反斜杠，避免 SQL 字符串里出现转义歧义。
+        conn.execute("UPDATE photos SET path = replace(path, char(92), '/') "
+                     "WHERE instr(path, char(92)) > 0")
 
 
 @contextmanager
