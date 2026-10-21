@@ -63,8 +63,13 @@ jobs:
         run: |
           $bad = @()
           if (Test-Path "dist\FoodieTrail\data") { $bad += "dist\FoodieTrail\data" }
-          $bad += Get-ChildItem "dist\FoodieTrail" -Recurse -File -Include *.db,*.db-wal,*.db-shm,*.log,*.key,*.pem `
+          # 数据库文件出现在任何层级都算脏（冒烟测试写的库就在 data/ 里）
+          $bad += Get-ChildItem "dist\FoodieTrail" -Recurse -File -Include *.db,*.db-wal,*.db-shm `
                    -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          # 日志与加密钥匙只看顶层：_internal 里第三方自带的证书（如 certifi\cacert.pem）是
+          # 正常运行依赖，不能一起判失败（第一版闸门就误报了 cacert.pem）
+          $bad += Get-ChildItem "dist\FoodieTrail\*.log", "dist\FoodieTrail\*.key" `
+                   -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
           if ($bad.Count -gt 0) {
             $bad | ForEach-Object { Write-Host "::error::构建产物含用户数据，拒绝发布：$_" }
             exit 1

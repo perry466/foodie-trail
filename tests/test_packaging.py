@@ -130,6 +130,9 @@ def test_ci_blocks_publishing_user_data():
     assert "Ensure build output has no user data" in workflow
     assert "dist\\FoodieTrail\\data" in workflow
     assert "*.db" in workflow and "*.key" in workflow
+    # _internal 里第三方自带的证书（certifi/cacert.pem）是运行依赖，不能算用户数据
+    # —— 第一版闸门用 *.pem 全盘扫描，把正常的产物判成了脏数据
+    assert "certifi" in workflow
     # 闸门必须排在「打安装包」之前，否则等于没拦
     assert workflow.index("Ensure build output has no user data") < workflow.index("Build installer")
 
