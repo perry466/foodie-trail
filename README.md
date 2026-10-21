@@ -1,186 +1,395 @@
-# 美食地图 Foodie Trail
+<div align="center">
 
-本地运行的个人美食记录应用：在地图上标记吃过的、想去的店，记录评分、标签、人均与照片，用列表和看板回看自己的口味分布。
+# 🍜 Foodie Trail · 美食地图
+### Every place you've eaten, on one map
 
-数据全部保存在本机，不登录、不上云、不需要外部数据库。
+> A local-first food journal: pin restaurants, rate them, filter by price / tag / status, and read your taste in a dashboard · FastAPI + Vue 3
 
-![主界面：地图打点与聚合](docs/screenshots/01-map.jpg)
+[![简体中文](https://img.shields.io/badge/简体中文-查看中文文档-ff6b9d?style=for-the-badge)](./README_zh.md)
+![Python](https://img.shields.io/badge/Python-3.10%2B-4a90d9?style=for-the-badge)
+![No build step](https://img.shields.io/badge/Frontend-no_build_step-2ea44f?style=for-the-badge)
 
-## 功能
+</div>
 
-- **地图记录**：点击地图选点，或用地址联想（输入即出候选，↑↓ 选择、Enter 确认）；支持「定位我」。
-- **完整字段**：名称、评分（1–5 星）、标签、营业时间（按周设置时段）、人均消费、打卡状态（想去 / 去过 / 收藏）、备注、照片。
-- **精确筛选**：关键词、星级、标签多选、打卡状态、人均区间、视野内、草稿范围；条件可叠加，结果实时联动地图。
-- **记录列表**：搜索、排序、滚动加载（超长列表不会一次性塞进 DOM），支持多选后批量删除（全选 / 反选 / 清空）。
-- **数据看板**：总记录、打卡率、待拔草、人均中位数、状态构成、评分与价位分布、高频标签、近 12 个月录入趋势，图表可点击直接筛到列表。
-- **照片**：上传后自动校正方向并压缩，详情页支持灯箱浏览。
-- **草稿**：未完成的记录可存为草稿，仍显示在列表中并带角标，可单独筛选。
-- **备份**：导出 JSON（可含照片），换机或重装后可完整导入。
-- **主题**：深色 / 浅色切换；快捷键 `n` 新建、`/` 搜索、`Esc` 关闭面板。
+---
 
-## 界面
+> 📘 **This guide is in English.** Prefer 中文? → **[查看中文文档 →](./README_zh.md)**
 
-筛选面板：星级、标签、打卡状态、人均价位、草稿范围，条件即时生效。
+## 📸 Screenshots
 
-![筛选面板](docs/screenshots/03-filter.jpg)
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="./docs/screenshots/01-map.jpg"><img src="./docs/screenshots/01-map.jpg" alt="Map view" width="100%"/></a>
+      <br/><b>🗺 Map</b> · pins colored by rating, clustering, hover preview
+    </td>
+    <td align="center" width="50%">
+      <a href="./docs/screenshots/03-filter.jpg"><img src="./docs/screenshots/03-filter.jpg" alt="Filter panel" width="100%"/></a>
+      <br/><b>🔍 Filters</b> · stars, price buckets, tags, status, drafts, viewport
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="./docs/screenshots/04-dashboard.jpg"><img src="./docs/screenshots/04-dashboard.jpg" alt="Dashboard" width="100%"/></a>
+      <br/><b>📊 Dashboard</b> · totals, rating / price distribution, 12-month trend
+    </td>
+    <td align="center" width="50%">
+      <a href="./docs/screenshots/05-detail.jpg"><img src="./docs/screenshots/05-detail.jpg" alt="Record detail" width="100%"/></a>
+      <br/><b>🍽 Detail</b> · one-tap status switch, photos, edit, navigate
+    </td>
+  </tr>
+</table>
 
-数据看板：从总量、分布到标签偏好，图表点击即可下钻。
+> 🔎 **Drill-down tip**: every chart in the dashboard is clickable — it jumps to the list with that filter already applied.
 
-![数据看板](docs/screenshots/04-dashboard.jpg)
+---
 
-记录详情：点击图钉或列表项打开，卡片锚定在对应位置。
+## ✨ Features
 
-![记录详情](docs/screenshots/05-detail.jpg)
+- 🗺 **Map-first recording** — click the map to drop a pin, right-click / long-press to add with coordinates prefilled, or search an address; "locate me" uses browser geolocation.
+- 🏷 **Complete fields** — name, 1–5 stars, tags, weekly opening hours (multiple slots per day), average price per person, status (want / visited / favourite), note, up to 9 photos.
+- 🔍 **Precise filters** — keyword, exact star range, price buckets (`<30 / 30–60 / 60–100 / 100–200 / ≥200`), tags (match all or any), check-in status, current viewport, drafts. Filters live in the URL, so refresh and back/forward keep them.
+- 📋 **List that scales** — scroll-to-load (renders 60 at a time), sorting, keyboard `↑`/`↓` + `Enter`, multi-select with select-all / invert / clear, batch delete.
+- 📊 **Dashboard** — totals, visited rate, pending spots, average & median price, rating and price distribution, top tags, 12-month trend, data-quality hints, and "what to eat next" lists. Every chart drills down.
+- 🖼 **Photos** — EXIF orientation corrected, long edge resized to 1280 px and re-encoded as JPEG (target ≤ 500 KB), lightbox with arrow-key navigation.
+- 📝 **Drafts** — save unfinished records as drafts with a badge; the add-form autosaves to `localStorage` so an accidental close doesn't lose typing.
+- 💾 **Backup & restore** — JSON export (with or without photos) → import with **preview → confirm**, live progress, and per-record transactions.
+- 🎨 **Light / dark theme**, keyboard shortcuts (`n` new, `/` search, `f` filter, `Esc` step back).
+- 🔒 **Local only** — the server binds `127.0.0.1`, rejects cross-site origins, and Amap keys are encrypted at rest with Fernet.
 
-> 截图使用虚构的演示数据。未配置高德 Key 时地图自动使用本地 Leaflet 渲染，底图为高德瓦片。
+> 💡 Day-to-day operations (adding a record, hours editor, import flow, shortcuts) are covered in the **[Usage Guide](./docs/USAGE.md)** · **[使用指南（中文）](./docs/USAGE_zh.md)**.
 
-## 技术栈
+---
 
-- 后端：FastAPI、SQLite、cryptography（Fernet 加密）、Pillow、httpx。
-- 前端：原生 JavaScript + Vue 3（本地生产版）、Leaflet 与 Leaflet.markercluster；高德 JS API 可选。
-- 形态：前后端同进程，无外部服务依赖；服务只监听 `127.0.0.1`，仅接受本机页面来源。
+## 🚀 Quick Start (from scratch)
 
-## 目录结构
+```bash
+git clone https://github.com/perry466/foodie-trail.git
+cd foodie-trail
+
+# Windows
+setup.bat          # creates venv + installs runtime & test deps
+start.bat          # starts the server and opens the browser
+
+# macOS / Linux
+./setup.sh
+./start.sh
+```
+
+That's it — **no Node.js, no build step, no database server**. The frontend ships as plain ES modules plus a vendored Vue 3, and SQLite is embedded.
+
+> ⚠️ Start it with `python -m app.main` **from the repository root** — the backend uses package-relative imports, so `python app/main.py` will fail.
+
+---
+
+## 📑 Table of Contents
+
+- [📋 1. Requirements](#1-requirements)
+- [📁 2. Project Structure](#2-project-structure)
+- [🚀 3. Running](#3-running)
+- [🗺 4. Map Providers](#4-map-providers)
+- [💾 5. Data and Backup](#5-data-and-backup)
+- [🧪 6. Tests and Data Health](#6-tests-and-data-health)
+- [💽 7. Data Model](#7-data-model)
+- [🔌 8. API Reference](#8-api-reference)
+- [⚙️ 9. Limits and Defaults](#9-limits-and-defaults)
+- [❓ 10. FAQ](#10-faq)
+- [🛠 11. Development](#11-development)
+
+---
+
+## 📋 1. Requirements
+
+| Dependency | Version | Notes |
+| --- | --- | --- |
+| Python | 3.10+ | tested on 3.14; `setup.bat` / `setup.sh` create the venv for you |
+| Node.js | 18+ | **optional** — only for `tests/front-check.js` |
+| Git | any | to clone and update |
+| Browser | modern | Chrome / Edge / Firefox / Safari |
+
+No external services are required. Map tiles come from Amap's public raster endpoints when no key is configured; everything else is local.
+
+---
+
+## 📁 2. Project Structure
 
 ```
 foodie-trail/
-├── app/                  # FastAPI 后端
-│   ├── main.py           # 路由、请求模型、图片压缩、高德代理
-│   ├── repository.py     # 数据访问层（SQLite 实现）
-│   ├── db.py             # 建表与连接管理（WAL、外键）
-│   ├── crypto.py         # 高德 Key 的 Fernet 加解密
-│   ├── coords.py         # 坐标转换与距离计算
-│   ├── validate.py       # 字段归一化与导入校验（导入/读取共用）
-│   └── pathconf.py       # 路径常量与端口探测
-├── static/               # 前端
-│   ├── index.html        # 页面骨架与模板
-│   ├── css/style.css     # 样式（亮 / 暗主题）
-│   ├── js/app.js         # 地图适配层与界面逻辑
-│   ├── lib/              # 本地依赖：Vue、Leaflet、markercluster
-│   └── favicon.svg/.ico  # 站点图标
-├── docs/screenshots/     # 界面截图
-├── tests/                # 回归测试（pytest + Node 断言）
-├── health_check.py       # 数据体检（只读）：库完整性、照片、脏数据、演示数据
-├── seed_1000.py          # 演示数据生成脚本（可选）
-├── requirements.txt      # 运行依赖
-├── requirements-dev.txt  # 测试依赖
-├── pytest.ini            # pytest 配置
-├── setup.bat / setup.sh  # 一键创建 venv 并安装依赖
-├── start.bat / start.sh  # 启动脚本（探测依赖，失效自动回退）
-└── README.md
+├── app/                        # FastAPI backend
+│   ├── main.py                 # routes, request models, image pipeline, Amap proxy
+│   ├── repository.py           # data access + dashboard aggregation + sort whitelist
+│   ├── validate.py             # field normalisation & import validation (shared)
+│   ├── db.py                   # schema, connections (WAL, foreign keys)
+│   ├── crypto.py               # Fernet encryption for Amap keys (self-healing)
+│   ├── coords.py               # WGS-84 ↔ GCJ-02, haversine distance
+│   └── pathconf.py             # paths, port discovery, photo limits
+├── static/                     # frontend (no build step)
+│   ├── index.html              # page shell + all templates
+│   ├── css/style.css           # styles, light & dark themes
+│   ├── js/app.js               # map adapter + UI logic
+│   └── lib/                    # vendored Vue, Leaflet, markercluster
+├── docs/
+│   ├── screenshots/            # README images
+│   ├── USAGE.md                # usage guide (English)
+│   └── USAGE_zh.md             # usage guide (Chinese)
+├── tests/                      # pytest suite + Node front-end assertions
+├── hooks/pre-commit            # optional guard: blocks data files on commit
+├── health_check.py             # read-only data health check
+├── repo_guard.py               # allow-by-default guard rules used by the hook
+├── seed_demo.py                # demo data (direct DB, `demo-` ids, clearable)
+├── seed_1000.py                # bulk demo data through the running API
+├── setup.bat / setup.sh        # create venv + install dependencies
+├── start.bat / start.sh        # probe interpreter, then start the app
+├── data/                       # ← your data (git-ignored)
+└── README.md / README_zh.md
 ```
 
-## 运行方式
+---
 
-1. 准备环境（推荐一键脚本，会自动创建 venv 并装齐运行 + 测试依赖）：
+## 🚀 3. Running
 
-   ```bat
-   setup.bat
-   ```
+### 3.1 One-click (recommended)
 
-   ```bash
-   ./setup.sh
-   ```
+| Platform | First time | Every time |
+| --- | --- | --- |
+| Windows | `setup.bat` | `start.bat` |
+| macOS / Linux | `./setup.sh` | `./start.sh` |
 
-   手动方式：
+`setup` creates `venv/` and installs `requirements.txt` + `requirements-dev.txt`.
+`start` checks that the interpreter can really import `fastapi`, `uvicorn` and `PIL`, falls back to `py -3` / `python` if the venv is broken, and prints a clear fix hint instead of a traceback when nothing works.
 
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate        # Windows
-   pip install -r requirements.txt -r requirements-dev.txt
-   ```
+On start the app:
 
-2. 启动：
+1. picks a free port in `20000–65535` (reusing the last one saved in `data/.last_port`),
+2. initialises the database and `data/photos/`,
+3. opens the browser at `http://127.0.0.1:<port>` about 1.5 s later.
 
-   ```bash
-   python -m app.main
-   ```
-
-   也可直接运行 `start.bat`（Windows）或 `start.sh`（Linux / macOS）。启动脚本会先验证解释器能 `import fastapi, uvicorn, PIL`，venv 失效（换机器、升级/卸载过 Python）时自动回退到 `py -3` / `python`，都不可用则打印修复指引而不是直接崩掉。
-
-3. 访问：应用会在 `20000–65535` 中探测一个空闲端口，写入 `data/.last_port` 并打印在启动日志里，用浏览器打开该地址即可。
-
-> 后端使用包内相对导入，必须从项目根目录以 `python -m app.main` 启动，不能直接执行 `python app/main.py`。
-
-需要一些数据来体验时，可运行 `python seed_1000.py --count 200 --yes` 生成演示记录。
-
-该脚本**会写入正在运行的应用**，因此加了护栏：数据目录跟随 `FOODMAP_DATA_DIR`（不再写死项目 `data/`）、
-启动前先探测服务（连不上就一条都不写）、连续失败 5 条自动中止。只想看看目标而不写，用 `--dry-run`；
-想指定地址用 `--base http://127.0.0.1:端口`。
-
-**写库脚本的闸门**：只要数据目录是项目下的真实 `data/`（没有用 `FOODMAP_DATA_DIR` 指到别处），
-`seed_1000.py` 与 `seed_demo.py` 都会拒绝执行并提示加 `--yes`——避免"以为在试跑、其实在写真实库"。
-
-## 测试
+### 3.2 Manual
 
 ```bash
-python -m pytest tests -q      # 后端 133 个用例
-node tests/front-check.js      # 前端 38 项断言（需 Node 18+）
+python -m venv venv
+# Windows: venv\Scripts\activate    macOS/Linux: source venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+python -m app.main
 ```
 
-覆盖范围：常规 CRUD、照片上传/读取/删除、备份导出→清库→导入往返（含照片字节）、导入字段校验与畸形数据处理，以及草稿范围、密钥语义等回归点。测试使用临时数据目录（`FOODMAP_DATA_DIR`），不会读写 `data/`。
+### 3.3 Ports and data location
 
-Windows 下可运行 `tests\run-tests.bat` 一次跑完：退出码 0 全部通过、1 有失败、2 缺少 Node 导致前端部分跳过。
-
-## 配置高德地图（可选）
-
-不配置 Key 时使用内置 Leaflet 兜底，地图、打点、筛选全部可用，仅地址搜索与路径规划不可用。若需要高德底图和地址服务，在应用右上角「设置」中填写两类 Key：
-
-| Key | 用途 |
-|---|---|
-| Web 端（JS API）Key + 安全密钥 securityJsCode | 浏览器加载高德底图 |
-| Web 服务 Key | 地址联想、地址解析、驾车路线（后端代理） |
-
-两类 Key 用途不同，只填前者时底图正常但地址搜索不可用。Key 经 Fernet 加密后仅存本地数据库；已保存的值以掩码回显，输入框留空表示保持原值。
-
-## 数据体检（只读）
-
-随时可以确认「库没坏、照片没丢、没混进脏数据」：
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PORT` | random free port in `20000–65535` | force a port; invalid values are ignored with a warning instead of crashing |
+| `FOODMAP_DATA_DIR` | `<repo>/data` | move the whole data directory (portable use, tests, multiple libraries) |
 
 ```bash
-python health_check.py          # 基础检查
-python health_check.py --deep   # 额外逐张解码验证照片
+# run a second, isolated instance
+FOODMAP_DATA_DIR=/tmp/foodie-demo PORT=31200 python -m app.main
 ```
 
-检查项：SQLite 完整性、表结构、记录/照片计数、字段越界（星级、经纬度、人均、时间戳、tags JSON）、
-照片行对应文件是否缺失/为 0 字节、磁盘上的孤儿照片、`.fernet.key` 是否可用、WAL 大小、
-以及是否混入演示数据。**只读，不修改任何东西**；退出码 0 = 无致命问题，1 = 发现问题。
+---
 
-## 数据隐私
+## 🗺 4. Map Providers
 
-- 所有数据位于 `data/`：`foodmap.db`、`photos/`、加密主密钥 `.fernet.key`，均不进入版本库。
-- 服务只监听 `127.0.0.1` 并校验请求来源，外部站点无法跨站读写记录、照片或 Key。
-- 迁移到另一台机器时，复制整个 `data/` 目录即可；只拷 `foodmap.db` 而不拷 `.fernet.key` 会导致已保存的 Key 无法解密。
-- `.fernet.key` 万一损坏（被清空、拷贝中断、杀软改写），启动时会自动把它改名留档并生成新钥匙继续运行——记录与照片不受影响，只是此前保存的高德 Key 需要重填。
+| Setup | Basemap | Address search | Route |
+| --- | --- | --- | --- |
+| No key | Leaflet + Amap raster tiles | ✗ (banner explains it) | ✗ |
+| JS API key + security code | Amap JS API 2.0 | ✗ | ✗ |
+| + Web-service key | Amap JS API 2.0 | ✓ POI autocomplete, geocoding | ✓ driving route |
 
-## 提交前守卫（避免把数据带进仓库）
+Keys are entered in **Settings** inside the app — never in source files.
 
-`data/` 已在 `.gitignore` 里，但历史上出现过"临时目录没被忽略、差点被 `git add -A` 带上去"的情况。
-仓库里有两道保险：
+- Stored **Fernet-encrypted** in `data/foodmap.db`; the AES key lives in `data/.fernet.key`.
+- Existing values are shown masked (`••••1234`); leaving the field empty **keeps** the stored value. Removing requires the explicit "clear" action.
+- If `data/.fernet.key` is ever corrupted, the app renames it aside, generates a new one and keeps running — only previously saved Amap keys need re-entering; records and photos are untouched.
 
-1. **`repo_guard.py`**（只按路径判断，默认放行一切源码与资源）：
+---
 
-   ```bash
-   python repo_guard.py            # 检查全部已跟踪文件（应为 0 命中）
-   python repo_guard.py --staged   # 检查暂存区
-   ```
+## 💾 5. Data and Backup
 
-   拦：`data/`、`dev-context/`、`.workbuddy/`、`docs/ux/`、`*.db`、`*.key`/`*.pem`、`.env*`、
-   根目录 `*.json`（多为导出备份）、`.tmp-*`/`tmp/`、`venv/`、`__pycache__`、`dist/*.exe`。
-   **不拦**：`app/`、`static/`（含截图与 Leaflet 资源）、`tests/`（含 `test_backup_roundtrip.py`）、
-   文档、脚本、`hooks/`。
+Everything lives in `data/`:
 
-2. **pre-commit 钩子**（每个 clone 各装一次，只影响本机）：
+```
+data/
+├── foodmap.db        # SQLite (WAL) — records, photo rows, settings
+├── foodmap.db-wal    # write-ahead log (merged automatically)
+├── photos/           # JPEG files, one per photo
+├── .fernet.key       # key for the encrypted Amap credentials
+├── .last_port        # last used port
+└── backups/          # optional manual snapshots
+```
 
-   ```bash
-   cat hooks/pre-commit > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-   ```
+**Export** (More → Export backup) writes a JSON file:
 
-   提交时若暂存区里有上述文件会直接拒绝并列出文件名；确需跳过用 `git commit --no-verify`。
+| Mode | Contents | Use |
+| --- | --- | --- |
+| `full` | records **+ photos as base64** | real backup, moving machines |
+| `meta` | records only, `photosIncluded: false` | quick data dump, no photos touched on import |
 
-`tests/test_repo_guard.py` 会拿 `git ls-files` 的真实清单断言"没有任何已跟踪文件被误拦"，
-所以以后新增核心文件也不会被守卫挡住。
+Drafts are included by default, and the current filters still apply — clear them if you want everything.
 
-## 许可证
+**Import** is intentionally cautious:
 
-本项目供个人学习与使用。
+1. **Preview** — shows how many records will be added, updated or rejected, without writing anything.
+2. **Confirm** — writes with live progress.
+3. Per record: one transaction; photos are decoded, size-checked and re-encoded *before* the database is touched.
+4. If any photo in a record is corrupt, that record keeps its **existing** photos instead of losing them.
+5. Records whose `updatedAt` is not newer than the local copy are skipped and reported as **"already up to date"**.
+
+**Moving to another machine**: copy the whole `data/` folder. Copying only `foodmap.db` loses `.fernet.key`, so saved Amap keys can't be decrypted (records are fine).
+
+**Reset demo data**: `python seed_demo.py --clear --yes` removes every record with a `demo-` id together with its photo files. Real records are never touched.
+
+---
+
+## 🧪 6. Tests and Data Health
+
+```bash
+python -m pytest tests -q      # 133 backend cases
+node tests/front-check.js      # 38 front-end assertions (Node 18+)
+tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
+```
+
+Coverage highlights: CRUD and validation, photo upload/read/delete, export → wipe → import round-trip (including photo bytes), corrupt-backup safety, draft scopes, encrypted-key semantics, week-schedule round-trip, import performance, startup robustness (corrupt `.fernet.key`, invalid `PORT`), and the commit guard.
+
+**Data health check** (read-only, changes nothing):
+
+```bash
+python health_check.py          # integrity, schema, counts, field ranges, photos, demo data
+python health_check.py --deep   # additionally decodes every JPEG
+```
+
+**Commit guard** — `data/` is git-ignored, and a hook adds a second line of defence:
+
+```bash
+# once per clone
+cat hooks/pre-commit > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+```
+
+It blocks staged `data/`, `*.db`, `*.key`/`*.pem`, `.env*`, backup JSON, `.tmp-*`, `venv/`, `dist/*.exe` and lists the offending files. Everything else — source, tests, docs, screenshots — passes. If the guard itself errors, the commit is allowed with a warning instead of locking you out.
+
+---
+
+## 💽 7. Data Model
+
+| Table | Field | Type | Notes |
+| --- | --- | --- | --- |
+| `records` | `id` | TEXT PK | `[A-Za-z0-9_-]{1,64}`, generated uuid4 otherwise |
+| | `name` | TEXT | required, ≤ 120 chars |
+| | `lng` / `lat` | REAL | required, WGS-84 bounds checked |
+| | `rating` | INTEGER | 1–5 |
+| | `tags` | TEXT | JSON array, ≤ 32 tags × 24 chars |
+| | `business_hours` | TEXT | weekly schedule JSON `{"mon":[{"s":"10:00","e":"22:00"}],…}` or legacy plain text |
+| | `avg_price` | INTEGER | 0–100000; `0` is a valid price (free) |
+| | `checkin_status` | TEXT | `want` / `visited` / `favorite` / NULL |
+| | `note` | TEXT | ≤ 2000 chars |
+| | `draft` | INTEGER | 0/1 |
+| | `created_at` / `updated_at` | INTEGER | epoch milliseconds, 2000–2100 |
+| `photos` | `id`, `record_id`, `path`, `thumb`, `created_at` | | `record_id` cascades on delete; `path` is `photos/<uuid>.jpg` |
+| `settings` | `key`, `value` | TEXT | holds the encrypted Amap credentials |
+| `meta` | `key`, `value` | TEXT | schema version |
+
+---
+
+## 🔌 8. API Reference
+
+All endpoints are under `/api` on `127.0.0.1` only; requests from other origins are rejected with `403`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/records` | list with filters: `keyword`, `ratingMin/Max`, `avgPriceMin/Max`, `checkinStatus`, `tags`, `tagsAny`, `includeDrafts`, `draftsOnly`, `swLng/swLat/neLng/neLat`, `sort`, `limit`, `offset` |
+| GET | `/api/records/{id}` | single record **with photos** |
+| POST | `/api/records` | create (`201`; `409` if the id exists) |
+| PUT | `/api/records/{id}` | **full replace** — omitted optional fields are reset (see note below) |
+| DELETE | `/api/records/{id}` | delete record; photo files removed after the DB commit |
+| DELETE | `/api/records/batch` | body `{"ids": [...]}`; single transaction, then files |
+| POST | `/api/records/{id}/photos` | upload one image (multipart `file`), max 9 per record |
+| GET | `/api/photos/{id}` | raw JPEG |
+| DELETE | `/api/photos/{id}` | delete photo row, then file |
+| GET | `/api/config/amap` | which keys exist (`configured`, `webConfigured`), secret never returned |
+| PUT | `/api/settings/amap` | save JS key / security code / web-service key (empty = keep) |
+| DELETE | `/api/settings/amap/security` | clear only the security code |
+| DELETE | `/api/settings/amap` | clear all Amap keys |
+| POST | `/api/settings/test-connection` | verify the stored keys against Amap |
+| GET | `/api/amap/poi` | POI autocomplete (`keywords`, optional `city`, `location`) |
+| GET | `/api/amap/geocode` | address → coordinates |
+| GET | `/api/amap/route` | driving route between two points |
+| POST | `/api/coords/convert` | WGS-84 → GCJ-02 for browser geolocation |
+| GET | `/api/recommend/nearby` | nearest records to a point (API only, not in the UI) |
+| GET | `/api/recommend/similar/{id}` | similar records by tags / price (API only) |
+| GET | `/api/dashboard` | aggregated statistics (excludes drafts) |
+| GET | `/api/export` | streaming JSON backup: `mode=full\|meta`, `includeDrafts` |
+| POST | `/api/import` | multipart `file`; `confirm=true` writes, `progress=1` streams NDJSON |
+
+> ⚠️ **`PUT` is a full replace.** Fields you omit are reset (`tags → []`, `note → null`, `avgPrice → null`, `checkinStatus → null`, `draft → false`). The UI always sends the complete body; scripts must `GET` first, modify, then `PUT` the whole object.
+
+---
+
+## ⚙️ 9. Limits and Defaults
+
+| Item | Limit |
+| --- | --- |
+| Photos per record | 9 |
+| Upload size | 20 MB per file |
+| Stored photo | long edge 1280 px, JPEG quality 82 → step down to 30, target ≤ 500 KB |
+| Accepted formats | anything Pillow can decode (JPG / PNG / WebP / GIF / 8- & 16-bit greyscale …) |
+| Backup file | ≤ 256 MB, ≤ 200 000 records |
+| Photo inside a backup | ≤ 2 MB after decode, ≤ 64 megapixels |
+| Name / note / tags | 120 chars / 2000 chars / 32 tags × 24 chars |
+| Average price | 0 – 100 000 (`0` = free) |
+| Network | listens on `127.0.0.1` only — no LAN or phone access by design |
+
+---
+
+## ❓ 10. FAQ
+
+**Q1: The browser didn't open / the port is different every time**
+The app prints the URL and saves it to `data/.last_port`. Open the printed URL manually, or force a fixed port with `PORT=31200 python -m app.main`.
+
+**Q2: The map is blank but records load fine**
+Basemap tiles need internet. Without an Amap key you'll also see a banner explaining that address search and routes are unavailable — that's expected, pins and filters still work.
+
+**Q3: Address search says a key is required**
+Search uses the **web-service** key (a different key type from the JS API key). Add it in Settings → Web service key. The JS key alone only loads the map.
+
+**Q4: A photo won't upload**
+Check the format (must be decodable by Pillow) and size (≤ 20 MB). Very large panoramas over 64 megapixels are rejected on purpose to avoid decompression bombs.
+
+**Q5: Import finished with "written 0"**
+That means every record in the file is the same age or older than your local copy — nothing was overwritten. The result also reports how many were counted as *already up to date*.
+
+**Q6: Imported records lost their photos**
+The backup was exported in `meta` mode (`photosIncluded: false`), which by design never touches existing photos. Export in `full` mode to include images.
+
+**Q7: Nothing starts after moving the project / upgrading Python**
+Run `setup.bat` (or `./setup.sh`) again — it rebuilds `venv`. `start.bat` will also fall back to the system interpreter and tell you what is missing.
+
+**Q8: Can I open it from my phone or another PC?**
+Not by design: the server binds `127.0.0.1` and rejects cross-origin requests, so your data never leaves the machine. To use it elsewhere, copy the `data/` folder.
+
+**Q9: How do I wipe everything and start over?**
+Stop the app, delete `data/` (or set `FOODMAP_DATA_DIR` to a fresh folder), start again. Back up first if you might want the data back.
+
+**Q10: I see 100 "demo" records in the list**
+They come from `seed_demo.py` and all carry a `demo-` id prefix. Remove them with `python seed_demo.py --clear --yes` (this also deletes their photos).
+
+---
+
+## 🛠 11. Development
+
+- **Backend** — `app/main.py` holds routes and request models; `app/repository.py` is the only place that touches SQL; `app/validate.py` is shared by the write endpoints and the importer.
+- **Frontend** — no bundler. Edit `static/js/app.js` / `static/index.html` / `static/css/style.css` and refresh; Vue is vendored in `static/lib/vue`.
+- **Add a filter** — extend `list_records()` params → `repository.list()` → `_filterQuery()` / `_matchFilters()` in `app.js`; keep the API and the local preview counting identical.
+- **Add a field** — `RecordIn` (with a validator) → `db.SCHEMA` + migration → `repository` read/write → form and detail templates → export/import payload.
+- **Invariants worth keeping** (all covered by tests): `[min, max)` price buckets; drafts visible in both list and map through one scope; delete DB rows before deleting files; staged photo replacement on import; sort fields are whitelisted; `PUT` replaces everything; store photo paths with forward slashes.
+
+Run the whole suite before committing — the pre-commit hook only guards data, not correctness:
+
+```bash
+tests\run-tests.bat      # Windows
+python -m pytest tests -q && node tests/front-check.js
+```
+
+---
+
+## 📄 License
+
+Personal learning and use. No open-source licence file is bundled; add one if you plan to redistribute.
