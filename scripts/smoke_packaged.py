@@ -146,6 +146,11 @@ def main() -> int:
     finally:
         _kill(proc)
         shutil.rmtree(DATA, ignore_errors=True)     # 只清本次自建的目录
+        # 必须确认真的清掉了：紧接着 CI 会拿 dist/ 去打安装包，
+        # 残留的 data/ 会把这份「含一条冒烟记录 + 测试钥匙」的数据发给所有用户。
+        if DATA.exists():
+            print(f"[smoke] 清理失败：{DATA} 仍然存在，请不要用这个 dist/ 发布")
+            ok = False
 
     print("\n[smoke] 结果：" + ("通过" if ok else "失败"))
     return 0 if ok else 1

@@ -118,6 +118,25 @@ def test_release_zip_skips_user_data(tmp_path, monkeypatch):
     assert target.name == "FoodieTrail-9.9.9-windows-x64.zip"
 
 
+# ---------- 5. 发布前必须挡住「构建产物里的用户数据」 ----------
+def test_ci_blocks_publishing_user_data():
+    """冒烟测试会在 dist/ 里真建 data/（库、照片、钥匙、日志）。
+
+    清理失败或漏清，安装包就会把这份数据发给所有下载的人——
+    所以流水线里必须有一道「打包前检查 dist/ 干净」的硬闸门，
+    冒烟脚本自己也必须确认清理结果。
+    """
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "Ensure build output has no user data" in workflow
+    assert "dist\\FoodieTrail\\data" in workflow
+    assert "*.db" in workflow and "*.key" in workflow
+    # 闸门必须排在「打安装包」之前，否则等于没拦
+    assert workflow.index("Ensure build output has no user data") < workflow.index("Build installer")
+
+    smoke = (ROOT / "scripts/smoke_packaged.py").read_text(encoding="utf-8")
+    assert "清理失败" in smoke          # rmtree 之后要复查
+
+
 # ---------- 4. 发布脚本必须能跑在 cp1252 控制台上 ----------
 def test_release_scripts_survive_cp1252_console(monkeypatch):
     """GitHub Actions 的 Windows runner 控制台是 cp1252。

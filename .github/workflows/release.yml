@@ -55,6 +55,22 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
+      # 硬闸门：冒烟测试会真的在 dist/ 里建 data/（库、照片、钥匙、日志），
+      # 清理失败或忘了清，安装包就会把这份数据发给所有下载的人。
+      # 这里宁可让发布失败，也不让任何一个数据文件进安装包。
+      - name: Ensure build output has no user data
+        shell: pwsh
+        run: |
+          $bad = @()
+          if (Test-Path "dist\FoodieTrail\data") { $bad += "dist\FoodieTrail\data" }
+          $bad += Get-ChildItem "dist\FoodieTrail" -Recurse -File -Include *.db,*.db-wal,*.db-shm,*.log,*.key,*.pem `
+                   -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Host "::error::构建产物含用户数据，拒绝发布：$_" }
+            exit 1
+          }
+          Write-Host "构建产物干净：无 data/、无数据库、无日志、无密钥"
+
       # 用完整路径调用 ISCC，避免 choco 的 shim 没进 PATH 时静默失败
       - name: Build installer
         shell: cmd
