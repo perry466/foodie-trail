@@ -12,12 +12,14 @@
 """
 import argparse
 import json
+import os
 import random
 import sys
 import time
 from datetime import datetime, timedelta
 
 from app.db import get_conn, init_db
+from app.pathconf import DATA_DIR, PHOTOS_DIR
 from app.repository import SQLiteRepository
 
 DEMO_PREFIX = "demo-"
@@ -73,11 +75,46 @@ def schedule(fmt):
     return json.dumps({d: [{"s": fmt[0], "e": fmt[1]}] for d in days}, ensure_ascii=False)
 
 
+def is_real_data_dir() -> bool:
+    """目标是不是项目下的真实 data/（没有用 FOODMAP_DATA_DIR 指到别处）。
+
+    写库脚本一旦误打真实库，清理起来很麻烦（2026-10-21 真发生过一次）。
+    所以只要目标是真实目录，就必须显式加 --yes。
+    """
+    return not os.environ.get("FOODMAP_DATA_DIR")
+
+
+def _photo_file(rel_path):
+    """把 photos/xxx.jpg 解析成绝对路径；越界（../）返回 None。"""
+    try:
+        root = os.path.realpath(PHOTOS_DIR)
+        full = os.path.realpath(os.path.join(DATA_DIR, str(rel_path).replace("\\", "/")))
+        return full if os.path.commonpath([root, full]) == root else None
+    except (OSError, ValueError):
+        return None
+
+
 def clear_demo():
+    """删除 demo- 记录；照片行随外键级联，文件等库删成功后再清。"""
+    repo = SQLiteRepository()
     with get_conn() as conn:
-        cur = conn.execute("DELETE FROM records WHERE id LIKE ?", (DEMO_PREFIX + "%",))
-        n = cur.rowcount or 0
-    print(f"已删除演示记录 {n} 条（真实记录未动）")
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM records WHERE id LIKE ?", (DEMO_PREFIX + "%",)).fetchall()]
+    if not ids:
+        print("没有演示记录（id 前缀 demo-），无需清理")
+        return
+    paths = repo.photo_paths(ids)          # 先取文件路径，库删完再删文件
+    n = repo.delete_many(ids)
+    files = 0
+    for p in paths:
+        full = _photo_file(p)
+        if full and os.path.isfile(full):
+            try:
+                os.remove(full)
+                files += 1
+            except OSError:
+                pass
+    print(f"已删除演示记录 {n} 条、照片文件 {files} 个（真实记录未动）")
 
 
 def seed(count, seed_value):
@@ -141,22 +178,31 @@ def seed(count, seed_value):
     print(f"已写入演示记录 {created} 条（id 前缀 {DEMO_PREFIX}）")
 
 
-def main():
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="生成 / 清除美食地图演示数据")
     ap.add_argument("--count", type=int, default=100, help="生成条数，默认 100")
     ap.add_argument("--seed", type=int, default=20261019, help="随机种子（默认固定）")
     ap.add_argument("--clear", action="store_true", help="只删除 id 以 demo- 开头的记录")
-    args = ap.parse_args()
+    ap.add_argument("--yes", action="store_true", help="确认真实数据目录也允许写入/清理")
+    args = ap.parse_args(argv)
 
+    if is_real_data_dir() and not args.yes:
+        print(f"[seed_demo] 目标数据目录：{DATA_DIR}")
+        print("[seed_demo] 这是项目下的真实数据目录，本次会真的写入/删除。")
+        print("[seed_demo] 确认执行请加 --yes；只想试跑请先设置 FOODMAP_DATA_DIR 指向临时目录。")
+        return 2
+
+    print(f"[seed_demo] 数据目录：{DATA_DIR}")
     init_db()
     if args.clear:
         clear_demo()
-        return
+        return 0
     if args.count <= 0:
         print("--count 必须大于 0", file=sys.stderr)
-        sys.exit(1)
+        return 1
     seed(args.count, args.seed)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

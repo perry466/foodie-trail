@@ -60,6 +60,7 @@ foodie-trail/
 │   └── favicon.svg/.ico  # 站点图标
 ├── docs/screenshots/     # 界面截图
 ├── tests/                # 回归测试（pytest + Node 断言）
+├── health_check.py       # 数据体检（只读）：库完整性、照片、脏数据、演示数据
 ├── seed_1000.py          # 演示数据生成脚本（可选）
 ├── requirements.txt      # 运行依赖
 ├── requirements-dev.txt  # 测试依赖
@@ -101,12 +102,19 @@ foodie-trail/
 
 > 后端使用包内相对导入，必须从项目根目录以 `python -m app.main` 启动，不能直接执行 `python app/main.py`。
 
-需要一些数据来体验时，可运行 `python seed_1000.py` 生成演示记录（会写入当前数据目录）。
+需要一些数据来体验时，可运行 `python seed_1000.py --count 200 --yes` 生成演示记录。
+
+该脚本**会写入正在运行的应用**，因此加了护栏：数据目录跟随 `FOODMAP_DATA_DIR`（不再写死项目 `data/`）、
+启动前先探测服务（连不上就一条都不写）、连续失败 5 条自动中止。只想看看目标而不写，用 `--dry-run`；
+想指定地址用 `--base http://127.0.0.1:端口`。
+
+**写库脚本的闸门**：只要数据目录是项目下的真实 `data/`（没有用 `FOODMAP_DATA_DIR` 指到别处），
+`seed_1000.py` 与 `seed_demo.py` 都会拒绝执行并提示加 `--yes`——避免"以为在试跑、其实在写真实库"。
 
 ## 测试
 
 ```bash
-python -m pytest tests -q      # 后端 115 个用例
+python -m pytest tests -q      # 后端 127 个用例
 node tests/front-check.js      # 前端 38 项断言（需 Node 18+）
 ```
 
@@ -124,6 +132,19 @@ Windows 下可运行 `tests\run-tests.bat` 一次跑完：退出码 0 全部通�
 | Web 服务 Key | 地址联想、地址解析、驾车路线（后端代理） |
 
 两类 Key 用途不同，只填前者时底图正常但地址搜索不可用。Key 经 Fernet 加密后仅存本地数据库；已保存的值以掩码回显，输入框留空表示保持原值。
+
+## 数据体检（只读）
+
+随时可以确认「库没坏、照片没丢、没混进脏数据」：
+
+```bash
+python health_check.py          # 基础检查
+python health_check.py --deep   # 额外逐张解码验证照片
+```
+
+检查项：SQLite 完整性、表结构、记录/照片计数、字段越界（星级、经纬度、人均、时间戳、tags JSON）、
+照片行对应文件是否缺失/为 0 字节、磁盘上的孤儿照片、`.fernet.key` 是否可用、WAL 大小、
+以及是否混入演示数据。**只读，不修改任何东西**；退出码 0 = 无致命问题，1 = 发现问题。
 
 ## 数据隐私
 

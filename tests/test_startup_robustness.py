@@ -217,3 +217,158 @@ def test_import_accepts_float_rating(client):
     assert res["written"] == 2 and res["invalid"] == 0
     assert client.get("/api/records/float-r").json()["rating"] == 4
     assert client.get("/api/records/str-r").json()["rating"] == 5
+
+
+# ---------- 8. 种子脚本：必须尊重 FOODMAP_DATA_DIR，且连不上服务时不写入 ----------
+def test_seed_script_reads_data_dir_from_env(monkeypatch, tmp_path):
+    """`seed_1000.py` 以前写死项目 data/，无视 FOODMAP_DATA_DIR。
+
+    后果很严重：以为在隔离目录试跑，实际打到了正在运行的真实服务上
+    （2026-10-21 真的发生过一次，往真实库写了 678 条演示记录）。
+    """
+    import seed_1000
+
+    monkeypatch.setenv("FOODMAP_DATA_DIR", str(tmp_path))
+    assert seed_1000.data_dir() == str(tmp_path)
+
+    (tmp_path / ".last_port").write_text("31999", encoding="utf-8")
+    assert seed_1000.resolve_base() == "http://127.0.0.1:31999"
+    # 显式 --base 优先，且去掉尾部斜杠
+    assert seed_1000.resolve_base("http://127.0.0.1:1/") == "http://127.0.0.1:1"
+
+
+def test_seed_script_aborts_when_server_down(monkeypatch, tmp_path):
+    import seed_1000
+
+    monkeypatch.setenv("FOODMAP_DATA_DIR", str(tmp_path))
+    # 端口 9 上不会有服务；必须“先探测再写”，返回非 0 且不产生任何记录
+    rc = seed_1000.main(["--count", "20", "--base", "http://127.0.0.1:9"])
+    assert rc == 1
+    assert not (tmp_path / "foodmap.db").exists()
+
+
+def test_seed_script_import_has_no_side_effects():
+    """旧版把 1000 次 POST 写在模块顶层，任何 import 都会打库。"""
+    import importlib
+    import seed_1000
+
+    importlib.reload(seed_1000)          # 再执行一次模块级代码，不应发起请求
+    assert callable(seed_1000.main)
+
+
+# ---------- 9. 健康检查脚本：能发现丢照片/孤儿文件/演示数据 ----------
+def test_health_check_clean_returns_zero(client, capsys):
+    import health_check
+    from app.pathconf import DATA_DIR
+
+    client.post("/api/records", json={"name": "正常店", "lng": 116.4, "lat": 39.9, "rating": 4})
+    rc = health_check.main(["--data-dir", str(DATA_DIR)])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "integrity_check = ok" in out
+
+
+def test_health_check_detects_missing_photo_file(client, capsys):
+    import health_check
+    from app.pathconf import DATA_DIR, PHOTOS_DIR
+
+    rid = client.post("/api/records", json={"name": "丢图店", "lng": 1, "lat": 1}).json()["id"]
+    pid = client.post(f"/api/records/{rid}/photos",
+                      files={"file": ("a.jpg", _png_rgb(), "image/jpeg")}).json()["id"]
+    os.remove(os.path.join(PHOTOS_DIR, pid + ".jpg"))
+
+    rc = health_check.main(["--data-dir", str(DATA_DIR)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "文件丢失" in out
+
+
+def test_health_check_orphan_is_warning_only(client, capsys):
+    import health_check
+    from app.pathconf import DATA_DIR, PHOTOS_DIR
+
+    os.makedirs(PHOTOS_DIR, exist_ok=True)
+    orphan = os.path.join(PHOTOS_DIR, "orphan-test.jpg")
+    with open(orphan, "wb") as f:
+        f.write(_png_rgb())
+    try:
+        rc = health_check.main(["--data-dir", str(DATA_DIR)])
+        out = capsys.readouterr().out
+        assert rc == 0                     # 孤儿文件不致命，只提醒
+        assert "没有记录引用" in out
+    finally:
+        os.remove(orphan)
+
+
+def test_health_check_reports_demo_records(client, capsys):
+    import health_check
+    from app.pathconf import DATA_DIR
+
+    client.post("/api/records", json={"id": "demo-001", "name": "演示店", "lng": 1, "lat": 1})
+    rc = health_check.main(["--data-dir", str(DATA_DIR)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "演示数据" in out and "seed_demo.py --clear" in out
+
+
+def _png_rgb(size=(64, 48)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, (120, 90, 60)).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+# ---------- 10. 写库脚本的真实目录闸门 ----------
+def test_seed_demo_refuses_real_data_dir(monkeypatch, capsys):
+    import seed_demo
+
+    monkeypatch.delenv("FOODMAP_DATA_DIR", raising=False)   # 模拟直接在本机跑
+    rc = seed_demo.main(["--count", "5"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "--yes" in out
+
+
+def test_seed_demo_clear_refuses_without_yes(monkeypatch, capsys):
+    import seed_demo
+
+    monkeypatch.delenv("FOODMAP_DATA_DIR", raising=False)
+    rc = seed_demo.main(["--clear"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "--yes" in out
+
+
+def test_seed_1000_refuses_real_data_dir(monkeypatch, capsys):
+    import seed_1000
+
+    monkeypatch.delenv("FOODMAP_DATA_DIR", raising=False)
+    rc = seed_1000.main(["--count", "5"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "--yes" in out
+
+
+def test_seed_1000_dry_run_allowed_without_yes(monkeypatch, capsys):
+    import seed_1000
+
+    monkeypatch.delenv("FOODMAP_DATA_DIR", raising=False)
+    rc = seed_1000.main(["--count", "5", "--dry-run", "--base", "http://127.0.0.1:9"])
+    out = capsys.readouterr().out
+    assert rc == 0 and "dry-run" in out
+
+
+def test_clear_demo_removes_photo_files(client):
+    """`--clear` 以前只删库行，磁盘上的照片会变成孤儿文件。"""
+    import seed_demo
+    from app.pathconf import PHOTOS_DIR
+
+    rid = "demo-777"
+    client.post("/api/records", json={"id": rid, "name": "演示图店", "lng": 1, "lat": 1})
+    pid = client.post(f"/api/records/{rid}/photos",
+                      files={"file": ("a.jpg", _png_rgb(), "image/jpeg")}).json()["id"]
+    f = os.path.join(PHOTOS_DIR, pid + ".jpg")
+    assert os.path.isfile(f)
+
+    seed_demo.clear_demo()
+    assert not os.path.isfile(f)
+    assert client.get(f"/api/records/{rid}").status_code == 404
