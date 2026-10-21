@@ -10,6 +10,7 @@
 就等于把私人数据发到 Release 上。
 """
 import argparse
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -18,6 +19,24 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist" / "FoodieTrail"
 OUT_DIR = ROOT / "release"
 SKIP_TOP = {"data", "app.log"}          # 运行产物，不进发布包
+
+
+def _safe_console():
+    """让日志在 CI 和老控制台上都不因编码崩溃。
+
+    CI 的 Windows runner 是 cp1252，打印中文会 UnicodeEncodeError
+    （v1.0.0 首次发布就是被这个打成失败的）：CI 里切 UTF-8，
+    本地只把编不了的字符替换掉，不动原编码。
+    """
+    ci = os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if ci:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            else:
+                stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
 
 
 def build_zip(dist: Path, out_dir: Path, version: str) -> tuple:
@@ -50,6 +69,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="打包 dist/FoodieTrail 为发布 zip")
     ap.add_argument("version", nargs="?", default="dev", help="版本号，如 v1.0.0 或 1.0.0")
     args = ap.parse_args(argv)
+    _safe_console()
 
     if not DIST.is_dir():
         print(f"[zip] 找不到 {DIST}，请先运行：pyinstaller FoodieTrail.spec --noconfirm")

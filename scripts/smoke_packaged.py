@@ -26,6 +26,27 @@ EXE = EXE_DIR / "FoodieTrail.exe"
 DATA = EXE_DIR / "data"
 
 
+def _safe_console():
+    """让日志在 CI 和老控制台上都不因编码崩溃。
+
+    GitHub Actions 的 Windows runner 是 cp1252：打印 ✓ 或中文都会
+    UnicodeEncodeError，整步直接失败——v1.0.0 首次发布就死在这
+    （日志里是 cp1252.py: encode）。所以：
+
+    - 在 CI 里切 UTF-8：日志能正常显示中文（runner 按 UTF-8 解码）；
+    - 本地只把「编不了」的字符替换掉：不动原编码，避免中文控制台变乱码。
+    """
+    ci = os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if ci:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            else:
+                stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):   # 被重定向/不可配置时忽略
+            pass
+
+
 def _http(url, payload=None, timeout=5):
     data = None
     headers = {}
@@ -78,6 +99,7 @@ def _kill(proc):
 
 
 def main() -> int:
+    _safe_console()
     if not EXE.is_file():
         print(f"[smoke] 找不到 {EXE}，先运行 pyinstaller FoodieTrail.spec")
         return 1

@@ -116,3 +116,46 @@ def test_release_zip_skips_user_data(tmp_path, monkeypatch):
     # 说明文件会被额外放到 exe 同级（存在才加），其余文件数 = 2
     assert count == (3 if "FoodieTrail/快速开始.txt" in names else 2), names
     assert target.name == "FoodieTrail-9.9.9-windows-x64.zip"
+
+
+# ---------- 4. 发布脚本必须能跑在 cp1252 控制台上 ----------
+def test_release_scripts_survive_cp1252_console(monkeypatch):
+    """GitHub Actions 的 Windows runner 控制台是 cp1252。
+
+    在那里 `print("[smoke] ✓ …")` 或打印中文都会 UnicodeEncodeError，
+    整步直接失败——v1.0.0 首次发布就死在这（日志里是 cp1252.py: encode）。
+    两个发布脚本都必须在开头调 `_safe_console()`：
+    CI 里切 UTF-8（日志中文不乱码），本地只替换编不了的字符。
+    """
+    import io
+
+    for name in ("smoke_packaged", "make_release_zip"):
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        try:
+            mod = __import__(name)
+        finally:
+            _sys.path.pop(0)
+        assert hasattr(mod, "_safe_console"), f"{name} 缺少 _safe_console()"
+
+        for is_ci in (False, True):
+            if is_ci:
+                monkeypatch.setenv("GITHUB_ACTIONS", "true")
+            else:
+                monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+                monkeypatch.delenv("CI", raising=False)
+
+            buf = io.BytesIO()
+            # 刻意用 strict：修复前这里会抛 UnicodeEncodeError
+            stream = io.TextIOWrapper(buf, encoding="cp1252", errors="strict", newline="")
+            monkeypatch.setattr(_sys, "stdout", stream)
+            try:
+                mod._safe_console()
+                print(f"[{name}] ✓ 中文与符号")
+                stream.flush()
+                raw = buf.getvalue()
+                assert raw, f"{name} 在 cp1252 下什么都没输出"
+                if is_ci:
+                    raw.decode("utf-8")          # CI 里必须是 UTF-8，日志才不乱码
+            finally:
+                stream.detach()
+                monkeypatch.undo()
