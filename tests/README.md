@@ -5,22 +5,22 @@
 
 ## 一、跑测试
 
-### 1. 后端（pytest，99 个用例）
+### 1. 后端（pytest，115 个用例）
 
 ```bat
 venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 venv\Scripts\python.exe -m pytest tests -q
 ```
 
-预期输出：`99 passed`。
+预期输出：`115 passed`。
 
-### 2. 前端（Node 断言，36 项）
+### 2. 前端（Node 断言，38 项）
 
 ```bat
 node tests\front-check.js
 ```
 
-预期输出：`通过 36 项` 且退出码为 0。缺 Node 时先装 Node 18+；Windows 上一般已有 `node`。
+预期输出：`通过 38 项` 且退出码为 0。缺 Node 时先装 Node 18+；Windows 上一般已有 `node`。
 
 ### 3. 一条命令全跑
 
@@ -93,7 +93,8 @@ venv\Scripts\python.exe -m app.main
 | `...::test_unsafe_id_is_stable_across_repeated_imports` | 不安全 id 重复导入只产生一条记录（uuid5 确定性） |
 | `...::test_zero_price_is_a_real_price` | 0 元在 API / 看板都算有效价格 |
 | `...::test_coords_convert_bad_bodies_are_4xx` | null/数组/坏 JSON 一律 4xx，不 500 |
-| `front-check.js` | 草稿三态的地图请求参数与渲染结果、重复点击不重复请求、导出 URL 含 `includeDrafts=1`、照片删除失败保留待删项且表单不关闭、价位区间预览边界、Object URL 复用与释放、经纬度 0 可保存 |
+| `front-check.js` | 草稿三态的地图请求参数与渲染结果、重复点击不重复请求、导出 URL 含 `includeDrafts=1`、照片删除失败保留待删项且表单不关闭、价位区间预览边界、Object URL 复用与释放、经纬度 0 可保存、导入「0 写入但已是最新」文案、进入批量选择同步 URL |
+| `test_startup_robustness.py` | **启动健壮性与性能 16 例**：`.fernet.key` 损坏仍能启动且坏文件留档、好钥匙不被换、`PORT=abc/99999` 不崩、16 位灰度 PNG 与 LA/CMYK/P 模式可上传且灰度不被压成纯白、非图片仍 400、重复导入计入 `unchanged`、旧备份不覆盖新记录、300 条导入 < 6s（连接复用）、`%`/`_` 按字面量搜索、`rating: 4.0`/`"5"` 不再整条被拒 |
 
 ## 四、手工验证（不用测试脚本时）
 

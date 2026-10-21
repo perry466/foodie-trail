@@ -4,11 +4,12 @@
 import json
 from abc import ABC, abstractmethod
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
 from .db import get_conn
-from .validate import MAX_TS_MS, MIN_TS_MS, normalize_price, normalize_tags
+from .validate import MAX_TS_MS, MIN_TS_MS, escape_like, normalize_price, normalize_tags
 
 # SQLite 单条 SQL 的参数上限默认 999，批量 IN 操作按 400 分批
 _CHUNK_SIZE = 400
@@ -92,7 +93,22 @@ def _chunks(seq, size: int = _CHUNK_SIZE):
         yield seq[i:i + size]
 
 
-def _row_to_record(row, with_photos: bool = False) -> dict:
+@contextmanager
+def _using(conn):
+    """借用调用方连接（不自作主张提交/关闭），没有则自己开一条并提交。
+
+    导入一条记录要读写三四次库。每条都新建连接的话，`sqlite3.connect` +
+    `close` 在本机实测就要 4~5ms（Windows 上尤其明显），1000 条备份因此要 55s。
+    复用同一条连接后，单条只剩 SQL 与一次提交的开销。
+    """
+    if conn is not None:
+        yield conn
+        return
+    with get_conn() as c:
+        yield c
+
+
+def _row_to_record(row, with_photos: bool = False, conn=None) -> dict:
     # 读取侧也做一次归一化：历史数据/被手工改过的库里可能存在字符串或对象形态的 tags，
     # 前端 `tags.forEach` 会直接抛错导致整个列表加载失败，这里兜住。
     try:
@@ -115,7 +131,7 @@ def _row_to_record(row, with_photos: bool = False) -> dict:
         "updatedAt": row["updated_at"],
     }
     if with_photos:
-        rec["photos"] = _photos_for(row["id"])
+        rec["photos"] = _photos_for(row["id"], conn)
     # 列表接口不返回全部照片，只带一张封面 id，供缩略图使用
     try:
         if row["cover_id"]:
@@ -125,9 +141,9 @@ def _row_to_record(row, with_photos: bool = False) -> dict:
     return rec
 
 
-def _photos_for(record_id: str) -> list:
-    with get_conn() as conn:
-        rows = conn.execute(
+def _photos_for(record_id: str, conn=None) -> list:
+    with _using(conn) as c:
+        rows = c.execute(
             "SELECT id, path, thumb, created_at FROM photos WHERE record_id=? ORDER BY created_at",
             (record_id,),
         ).fetchall()
@@ -177,8 +193,10 @@ class SQLiteRepository(RecordRepository):
         elif not filters.get("includeDrafts"):
             sql += " AND (draft=0)"
         if filters.get("keyword"):
-            kw = f"%{filters['keyword']}%"
-            sql += " AND (name LIKE ? OR note LIKE ? OR tags LIKE ?)"
+            # 转义 % 与 _：否则搜一个 "%" 会命中全库、搜 "_" 会命中任意单字
+            kw = f"%{escape_like(filters['keyword'])}%"
+            sql += (" AND (name LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\'"
+                    " OR tags LIKE ? ESCAPE '\\')")
             args += [kw, kw, kw]
         if filters.get("ratingMin") is not None:
             sql += " AND rating >= ?"
@@ -199,13 +217,13 @@ class SQLiteRepository(RecordRepository):
             args.append(filters["checkinStatus"])
         if filters.get("tags"):
             # 默认 AND（都要有）；tagsAny=true 时改成 OR（有任一即可）
-            likes = ['%"' + t + '"%' for t in filters["tags"]]
+            likes = ['%"' + escape_like(t) + '"%' for t in filters["tags"]]
             if filters.get("tagsAny"):
-                sql += " AND (" + " OR ".join("tags LIKE ?" for _ in likes) + ")"
+                sql += " AND (" + " OR ".join("tags LIKE ? ESCAPE '\\'" for _ in likes) + ")"
                 args += likes
             else:
                 for kw in likes:
-                    sql += " AND tags LIKE ?"
+                    sql += " AND tags LIKE ? ESCAPE '\\'"
                     args.append(kw)
         if filters.get("bounds"):
             b = filters["bounds"]
@@ -225,10 +243,19 @@ class SQLiteRepository(RecordRepository):
             rows = conn.execute(sql, args).fetchall()
         return [_row_to_record(r) for r in rows]
 
-    def get(self, rid: str):
-        with get_conn() as conn:
+    def get(self, rid: str, conn=None):
+        # 带照片的详情读取：记录行与照片行用同一条连接，省掉一次建连开销
+        if conn is not None:
             row = conn.execute("SELECT * FROM records WHERE id=?", (rid,)).fetchone()
-        return _row_to_record(row, with_photos=True) if row else None
+            return _row_to_record(row, with_photos=True, conn=conn) if row else None
+        with get_conn() as c:
+            row = c.execute("SELECT * FROM records WHERE id=?", (rid,)).fetchone()
+            return _row_to_record(row, with_photos=True, conn=c) if row else None
+
+    def existing_ids(self) -> set:
+        """一次性取全部记录 id：导入预览要按 id 判断新增/覆盖，逐条查库会开 N 条连接。"""
+        with get_conn() as conn:
+            return {r["id"] for r in conn.execute("SELECT id FROM records")}
 
     def create(self, payload: dict):
         with get_conn() as conn:
@@ -317,15 +344,19 @@ class SQLiteRepository(RecordRepository):
                 paths += [r["path"] for r in rows]
         return paths
 
-    def upsert(self, payload: dict):
-        """导入用：存在则按 updatedAt 较新覆盖，否则插入。"""
-        with get_conn() as conn:
-            existing = conn.execute(
+    def upsert(self, payload: dict, conn=None):
+        """导入用：存在则按 updatedAt 较新覆盖，否则插入。
+
+        conn 由调用方传入时不提交、不关闭（导入整批复用一个连接），
+        事务边界交给调用方；传 None 则与其它方法一样自开自提交。
+        """
+        with _using(conn) as c:
+            existing = c.execute(
                 "SELECT updated_at FROM records WHERE id=?", (payload["id"],)
             ).fetchone()
             if existing and existing["updated_at"] >= payload["updatedAt"]:
                 return "skip"
-            conn.execute(
+            c.execute(
                 """INSERT INTO records
                    (id,name,lng,lat,rating,tags,business_hours,avg_price,checkin_status,note,draft,created_at,updated_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -345,21 +376,22 @@ class SQLiteRepository(RecordRepository):
             )
         return "upsert"
 
-    def replace_photos(self, rid: str, photos: list) -> list:
+    def replace_photos(self, rid: str, photos: list, conn=None) -> list:
         """单事务内 DELETE 旧照片行 + INSERT 新照片行；返回旧照片元数据。
 
         数据库行是「照片是否存在」的唯一真相：先换行，再删文件，
         这样进程中途崩溃最多留下孤儿文件，不会出现记录指向不存在的照片。
+        传 conn 时不提交（由调用方在提交成功后再删旧文件）。
         """
-        with get_conn() as conn:
+        with _using(conn) as c:
             old = [
                 {"id": r["id"], "path": r["path"]}
-                for r in conn.execute(
+                for r in c.execute(
                     "SELECT id, path FROM photos WHERE record_id=?", (rid,)
                 ).fetchall()
             ]
-            conn.execute("DELETE FROM photos WHERE record_id=?", (rid,))
-            conn.executemany(
+            c.execute("DELETE FROM photos WHERE record_id=?", (rid,))
+            c.executemany(
                 "INSERT INTO photos(id,record_id,path,thumb,created_at) VALUES (?,?,?,?,?)",
                 [(p["id"], rid, p["path"], p.get("thumb"), p["createdAt"]) for p in photos],
             )

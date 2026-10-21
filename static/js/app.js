@@ -810,7 +810,7 @@ const App = {
     },
 
     /* 批量选择 / 批量删除（列表抽屉内） */
-    enterSelect(){ this.moreOpen=false; this.filterOpen=false; this.panel='list'; this.selectMode=true; },
+    enterSelect(){ this.moreOpen=false; this.filterOpen=false; this.panel='list'; this.selectMode=true; this._syncURL(); },
     exitSelect(){ this.selectMode=false; this.selectedIds=[]; },
     isSelected(id){ return this.selectedIds.includes(id); },
     toggleSelect(id){
@@ -1256,12 +1256,18 @@ const App = {
     async locateMe(){
       if(!navigator.geolocation){ toast('浏览器不支持定位'); return; }
       navigator.geolocation.getCurrentPosition(async pos=>{
-        const {longitude:lng,latitude:lat}=pos.coords;
-        const gc=await API.sendForm('/api/coords/convert','POST',{lng,lat});
-        this.form.lng=gc.lng; this.form.lat=gc.lat;
-        this.locName='当前位置';
-        this.locCoord=`${gc.lat.toFixed(4)}, ${gc.lng.toFixed(4)}`;
-        MapView.tempMarker(gc.lng,gc.lat);
+        // 回调是 async：不加 try 的话坐标转换失败会变成未处理的 Promise 异常，
+        // 界面毫无反应，用户只看到「点了没动静」
+        try{
+          const {longitude:lng,latitude:lat}=pos.coords;
+          const gc=await API.sendForm('/api/coords/convert','POST',{lng,lat});
+          this.form.lng=gc.lng; this.form.lat=gc.lat;
+          this.locName='当前位置';
+          this.locCoord=`${gc.lat.toFixed(4)}, ${gc.lng.toFixed(4)}`;
+          MapView.tempMarker(gc.lng,gc.lat);
+        }catch(e){
+          toast('定位转换失败：'+(e.message||'网络异常')+'，请手动选点');
+        }
       },()=>toast('定位被拒，请手动选点'),{enableHighAccuracy:true,timeout:8000});
     },
     /* ---------- 位置搜索：输入即联想，不需要按回车 ---------- */
@@ -1520,8 +1526,10 @@ const App = {
         const skipped=j.photosSkipped?`，跳过异常照片 ${j.photosSkipped} 张`:'';
         const kept=j.photosKept?`，${j.photosKept} 条记录保留了原有照片`:'';
         const renamed=j.idsRenamed?`，${j.idsRenamed} 条 id 含非法字符已重建`:'';
-        this.importText=`完成：写入 ${j.written} 条${j.failed?`，失败 ${j.failed}`:''}${j.invalid?`，无效 ${j.invalid}`:''}${skipped}${kept}${renamed}`;
-        toast(`导入完成：写入 ${j.written}，无效 ${j.invalid}${skipped}${kept}${renamed}`);
+        // 「写入 0 条」单独出现会被当成失败：把按时间戳跳过（已是最新）的条数说清楚
+        const same=j.unchanged?`，${j.unchanged} 条已是最新未覆盖`:'';
+        this.importText=`完成：写入 ${j.written} 条${same}${j.failed?`，失败 ${j.failed}`:''}${j.invalid?`，无效 ${j.invalid}`:''}${skipped}${kept}${renamed}`;
+        toast(`导入完成：写入 ${j.written}${same}${j.invalid?`，无效 ${j.invalid}`:''}${skipped}${kept}${renamed}`);
         this.importOpen=false; this.importFile=null;
         await this.loadRecords();
       }catch(e){
@@ -1581,9 +1589,10 @@ const App = {
         if(this.pickingMap){ this.cancelPick(); return; }
         if(this.selectMode){ this.exitSelect(); return; }
         if(this.filterOpen){ this.filterOpen=false; return; }
-        if(this.detailOpen){ this.closeDetail(); return; }
+        if(this.detailOpen){ this.closeDetail(); this._syncURL(); return; }
         this.panel='none'; this.moreOpen=false;
         this.settingsOpen=this.formOpen=this.dashOpen=this.importOpen=false;
+        this._syncURL();          // 否则地址栏还留着 ?view=list，刷新后又跳回清单
       }
     });
     /* 空白点击：任何不在交互容器里的点击都算「点空白」。

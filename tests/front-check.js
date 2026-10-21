@@ -43,6 +43,8 @@ const ctx = {
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   FormData: class { append() {} },
   URL: { createObjectURL: () => '' },
+  URLSearchParams,
+  history: { replaceState() {} },
   fetch: async (url) => {
     lastUrl = url;
     let rows = ALL;
@@ -237,6 +239,34 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   });
   const hoursJson = ctx.__serializeHours(weekTwo);
   check('七天两段排班 JSON 超过 120 字', hoursJson.length > 400, String(hoursJson.length));
+
+  // ---- 导入结果：写入 0 条但全是「已是最新」时，必须说清楚而不是像失败 ----
+  let importFetch = null;
+  ctx.fetch = async (url) => {
+    lastUrl = url;
+    if (importFetch) return importFetch;
+    return { ok: true, json: async () => ALL };
+  };
+  importFetch = {
+    ok: true,
+    headers: { get: () => 'application/json' },
+    json: async () => ({ written: 0, unchanged: 3, invalid: 0, failed: 0, photosSkipped: 0, photosKept: 0, idsRenamed: 0 }),
+  };
+  app.importFile = {};
+  app.importBusy = false;
+  app.importText = '';
+  app.loadRecords = async () => {};
+  await app.doImport();
+  check('导入 0 写入时提示"已是最新"', /3 条已是最新/.test(app.importText), app.importText);
+
+  // ---- 关闭/进入批量时的 URL 同步（Esc 后刷新不能又跳回清单） ----
+  let synced = 0;
+  const realSync = app._syncURL;
+  app._syncURL = function () { synced++; return realSync.call(this); };
+  app.panel = 'none';
+  app.enterSelect();
+  check('进入批量选择会同步 URL', synced === 1 && app.panel === 'list', `synced=${synced}`);
+  app._syncURL = realSync;
 
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));

@@ -188,10 +188,45 @@ def normalize_checkin(value):
 
 
 def normalize_rating(value, default: int = None):
-    """星级：1-5 整数；bool 不算 int（True 会被当成 1）。非法返回 default。"""
-    if isinstance(value, bool) or not isinstance(value, int):
+    """星级：1-5 整数。
+
+    宽容三类等价写法，避免「一个字段的写法差异丢掉整条记录」：
+    - bool 不算 int（True 会被当成 1）→ default
+    - 值是整数的浮点（4.0，Python/脚本生成的 JSON 常见）→ 4
+    - 数字字符串（"4"）→ 4
+    非整数（4.5）、越界（0/6）仍返回 default。
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return default
+        value = int(value)
+    elif isinstance(value, str):
+        txt = value.strip()
+        if not txt:
+            return default
+        try:
+            num = float(txt)
+        except ValueError:
+            return default
+        if not math.isfinite(num) or not num.is_integer():
+            return default
+        value = int(num)
+    if not isinstance(value, int):
         return default
     return value if 1 <= value <= 5 else default
+
+
+def escape_like(value: str) -> str:
+    """转义 LIKE 的通配符（配合 SQL 里的 `ESCAPE '\\'` 使用）。
+
+    关键词搜索以前直接把用户输入拼进 `%...%`，搜一个 `%` 会命中全部记录、
+    搜 `_` 会命中任意单字；标签 LIKE 也有同样问题。转义后按字面量匹配。
+    """
+    if not isinstance(value, str):
+        return ""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def normalize_ts(value, default: int) -> int:

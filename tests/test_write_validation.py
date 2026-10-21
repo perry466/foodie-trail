@@ -176,10 +176,10 @@ def test_non_progress_import_reports_failed_count(client, monkeypatch):
 
     real = main._write_import_record
 
-    def flaky(payload, photos, photos_included=False):
+    def flaky(payload, photos, photos_included=False, conn=None):
         if payload["name"] == "会失败":
             raise RuntimeError("boom")
-        return real(payload, photos, photos_included)
+        return real(payload, photos, photos_included, conn=conn)
 
     monkeypatch.setattr(main, "_write_import_record", flaky)
     body = _import(client, [
@@ -196,10 +196,10 @@ def test_progress_import_reports_failed_count(client, monkeypatch):
 
     real = main._write_import_record
 
-    def flaky(payload, photos, photos_included=False):
+    def flaky(payload, photos, photos_included=False, conn=None):
         if payload["name"] == "会失败":
             raise RuntimeError("boom")
-        return real(payload, photos, photos_included)
+        return real(payload, photos, photos_included, conn=conn)
 
     monkeypatch.setattr(main, "_write_import_record", flaky)
     res = _import(client, [

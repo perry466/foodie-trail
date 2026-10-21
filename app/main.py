@@ -11,7 +11,7 @@ import uuid
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,9 +20,9 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import crypto
 from .coords import wgs84_to_gcj02, haversine
-from .db import init_db
+from .db import get_conn, init_db
 from .pathconf import (
-    AMAP_REST, DATA_DIR, DEFAULT_PORT, PHOTOS_DIR, PHOTO_MAX_BYTES,
+    AMAP_REST, DATA_DIR, PHOTOS_DIR, PHOTO_MAX_BYTES,
     PHOTO_MAX_COUNT, PHOTO_MAX_EDGE, PHOTO_QUALITY, STATIC_DIR,
 )
 from .repository import SQLiteRepository
@@ -215,7 +215,10 @@ def _now() -> int:
 
 def _compress_image(data: bytes) -> bytes:
     """把任意图片重编码为受控 JPEG。非图片/超大像素会抛 ValueError，由调用方转 4xx。"""
-    img = Image.open(io.BytesIO(data))
+    try:
+        img = Image.open(io.BytesIO(data))
+    except Exception as e:                    # 非图片、损坏文件：统一交给调用方转 400
+        raise ValueError(f"无法识别的图片：{e}")
     w, h = img.size
     # 解压炸弹：尺寸信息来自文件头，此时还没真正解码整张图，先拦掉
     if w <= 0 or h <= 0 or w * h > MAX_IMAGE_PIXELS:
@@ -233,19 +236,27 @@ def _compress_image(data: bytes) -> bytes:
                 img = img.transpose(trans[orientation])
     except Exception:
         pass
-    if img.mode in ("RGBA", "P"):
+    # 只转 RGBA/P 不够：16 位灰度（I;16 / I / F）、LA、CMYK 等模式直接 img.save(JPEG)
+    # 会抛 OSError，用户拿一张合法 PNG 也被报「无法识别的图片」。统一先落成 RGB。
+    if img.mode in ("I;16", "I;16B", "I;16L", "I", "F"):
+        # 16 位/32 位灰度按 8 位缩比，直接 convert("RGB") 会把整张图压成纯白
+        img = img.point(lambda v: v * (1 / 256.0)).convert("L")
+    if img.mode != "RGB":
         img = img.convert("RGB")
     w, h = img.size
     if max(w, h) > PHOTO_MAX_EDGE:
         scale = PHOTO_MAX_EDGE / max(w, h)
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     quality = PHOTO_QUALITY
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=quality)
-    while buf.tell() > PHOTO_MAX_BYTES and quality > 30:
-        quality -= 8
+    try:
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=quality)
+        while buf.tell() > PHOTO_MAX_BYTES and quality > 30:
+            quality -= 8
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality)
+    except OSError as e:                       # 极端色彩模式等：仍然给 4xx，不冒 500
+        raise ValueError(f"图片无法转换为 JPEG：{e}")
     return buf.getvalue()
 
 
@@ -314,6 +325,12 @@ def create_record(body: RecordIn):
 
 @app.put("/api/records/{rid}")
 def update_record(rid: str, body: RecordIn):
+    """**全量替换**语义：没传的可选字段会被重置（tags→[]、note→null、
+    avgPrice→null、checkinStatus→null、draft→false），不是局部更新。
+
+    前端 `_recordBody()` 因此每次都带齐所有字段。用脚本/curl 改状态时也必须
+    先 GET 再整体 PUT，否则会把备注、标签、草稿标记一起清掉。照片不在此接口内。
+    """
     existing = repo.get(rid)
     if not existing:
         raise HTTPException(404, "记录不存在")
@@ -763,8 +780,6 @@ def _iter_export(records: list, photos_map: dict, mode: str):
     for row in records:
         full = dict(row)
         full["photos"] = photos_map.get(row["id"], [])
-        if not full:
-            continue
         if not first:
             yield ","
         yield json.dumps(_export_record(full, mode), ensure_ascii=False)
@@ -920,11 +935,17 @@ def _photos_included_flag(backup: dict, record: dict, photos: list) -> bool:
     return bool(photos)
 
 
-def _write_import_record(payload: dict, photos: list, photos_included: bool = False) -> dict:
+def _write_import_record(payload: dict, photos: list, photos_included: bool = False,
+                         conn=None) -> dict:
     """写入一条记录（含照片）。
 
-    返回 {"written": bool, "photos": 成功张数, "skipped": 被拒张数, "kept": 旧照片是否保留}。
-    written=False 表示按 updatedAt 判定保留库里的新版本（此时不动照片）。
+    返回 {"written": bool, "unchanged": bool, "photos": 成功张数,
+          "skipped": 被拒张数, "kept": 旧照片是否保留, "removed": 旧照片元数据}。
+    written=False + unchanged=True 表示按 updatedAt 判定库里的版本更新，本条原样跳过
+    （此时不动照片）；调用方要把这个数单独报给用户，否则界面显示「写入 0 条」像是失败。
+
+    conn 由调用方传入时整批复用同一条连接：本函数不提交、不关连接，
+    旧照片文件也不在这里删（等调用方 commit 成功后再删，避免提交失败却已经删了图）。
 
     照片替换严格两阶段，顺序不能改：
     1. 所有新照片先解码/校验/重编码，落到 photos/.*.part 临时文件；
@@ -932,19 +953,22 @@ def _write_import_record(payload: dict, photos: list, photos_included: bool = Fa
     3. 任一张失败 → 丢弃全部新文件，原有照片原样保留。
     绝不「先删旧照片再逐张写新照片」：备份里照片损坏/为空时，那等于直接销毁原图。
     """
-    if repo.upsert(payload) == "skip":
-        return {"written": False, "photos": 0, "skipped": 0, "kept": False}
+    if repo.upsert(payload, conn=conn) == "skip":
+        return {"written": False, "unchanged": True, "photos": 0,
+                "skipped": 0, "kept": False, "removed": []}
 
-    existing = repo.get(payload["id"]) or {"photos": []}
+    existing = repo.get(payload["id"], conn=conn) or {"photos": []}
     old_photos = existing.get("photos") or []
     if not photos_included:
         # 备份没带照片（mode=meta 或旧格式无法判断）：只恢复记录字段，照片一律不动
-        return {"written": True, "photos": 0, "skipped": 0, "kept": bool(old_photos)}
+        return {"written": True, "unchanged": False, "photos": 0,
+                "skipped": 0, "kept": bool(old_photos), "removed": []}
 
     staged, skipped = _stage_import_photos(photos)
     if skipped:
         _discard_staged(staged)
-        return {"written": True, "photos": 0, "skipped": skipped, "kept": bool(old_photos)}
+        return {"written": True, "unchanged": False, "photos": 0,
+                "skipped": skipped, "kept": bool(old_photos), "removed": []}
 
     # 全部校验通过（0 张也走这里：photosIncluded=true 的空数组表示「确实没有照片」）
     moved = []
@@ -952,7 +976,7 @@ def _write_import_record(payload: dict, photos: list, photos_included: bool = Fa
         for item in staged:
             os.replace(item["tmp"], item["final"])
             moved.append(item["final"])
-        removed = repo.replace_photos(payload["id"], [i["photo"] for i in staged])
+        removed = repo.replace_photos(payload["id"], [i["photo"] for i in staged], conn=conn)
     except Exception:
         for path in moved:                 # 只回滚新文件；旧文件从头到尾没动过
             try:
@@ -961,32 +985,50 @@ def _write_import_record(payload: dict, photos: list, photos_included: bool = Fa
                 pass
         _discard_staged(staged)
         raise
+    if conn is not None:
+        # 复用连接：数据库还没提交，旧文件必须等调用方提交成功后再删
+        return {"written": True, "unchanged": False, "photos": len(staged),
+                "skipped": 0, "kept": False, "removed": removed or []}
     for p in (removed or []):
         _remove_photo_file(p.get("path"))  # 数据库已指向新集合，旧文件这时才删
-    return {"written": True, "photos": len(staged), "skipped": 0, "kept": False}
+    return {"written": True, "unchanged": False, "photos": len(staged),
+            "skipped": 0, "kept": False, "removed": []}
 
 
-def _iter_import(cleaned: list, total: int, invalid: int, invalid_details: list,
-                 ids_renamed: int = 0):
-    """逐条写库并产出进度事件（NDJSON）。"""
+def _import_one(conn, payload: dict, photos: list, photos_included: bool) -> dict:
+    """写一条记录 + 提交 + 清理被替换的旧照片文件（整批导入共用一个连接）。"""
+    res = _write_import_record(payload, photos, photos_included, conn=conn)
+    conn.commit()
+    for p in (res.get("removed") or []):
+        _remove_photo_file(p.get("path"))      # 提交成功后才删旧文件
+    res["removed"] = []
+    return res
+
+
+def _iter_import(cleaned: list, invalid: int, invalid_details: list, ids_renamed: int = 0):
+    """逐条写库并产出进度事件（NDJSON）。整批复用一条连接，单条事务。"""
     yield json.dumps({"type": "start", "total": len(cleaned), "invalid": invalid,
                       "idsRenamed": ids_renamed}) + "\n"
-    written = failed = photos_skipped = photos_kept = 0
-    for i, (payload, photos, photos_included) in enumerate(cleaned):
-        try:
-            res = _write_import_record(payload, photos, photos_included)
-            if res["written"]:
-                written += 1
-            photos_skipped += res["skipped"]
-            if res.get("kept"):
-                photos_kept += 1
-        except Exception as e:                     # 单条失败不中断整批
-            failed += 1
-            print(f"[import] 写入失败 {payload.get('id')}: {e}")
-        if (i + 1) % 5 == 0 or i + 1 == len(cleaned):
-            yield json.dumps({"type": "progress", "done": i + 1, "total": len(cleaned)}) + "\n"
+    written = failed = unchanged = photos_skipped = photos_kept = 0
+    with get_conn() as conn:
+        for i, (payload, photos, photos_included) in enumerate(cleaned):
+            try:
+                res = _import_one(conn, payload, photos, photos_included)
+                if res["written"]:
+                    written += 1
+                elif res.get("unchanged"):
+                    unchanged += 1
+                photos_skipped += res["skipped"]
+                if res.get("kept"):
+                    photos_kept += 1
+            except Exception as e:                     # 单条失败不中断整批
+                conn.rollback()
+                failed += 1
+                print(f"[import] 写入失败 {payload.get('id')}: {e}")
+            if (i + 1) % 5 == 0 or i + 1 == len(cleaned):
+                yield json.dumps({"type": "progress", "done": i + 1, "total": len(cleaned)}) + "\n"
     yield json.dumps({
-        "type": "done", "written": written, "invalid": invalid,
+        "type": "done", "written": written, "unchanged": unchanged, "invalid": invalid,
         "failed": failed, "invalidDetails": invalid_details,
         "photosSkipped": photos_skipped, "photosKept": photos_kept,
         "idsRenamed": ids_renamed,
@@ -1013,6 +1055,8 @@ async def import_records(file: UploadFile = File(...), confirm: bool = False, pr
     append = update = invalid = ids_renamed = 0
     invalid_details = []
     cleaned = []
+    # 一次取全部 id：预览只为区分「新增 / 覆盖」，逐条 repo.get 会开 N 条连接
+    known_ids = repo.existing_ids()
     for i, r in enumerate(records):
         errs = validate_record(r)
         if errs:
@@ -1036,7 +1080,7 @@ async def import_records(file: UploadFile = File(...), confirm: bool = False, pr
             photos, photos_included = [], False     # 形状不对就只恢复记录本身，不连带丢记录
         else:
             photos_included = _photos_included_flag(data, r, photos)
-        existing = repo.get(payload["id"])
+        existing = payload["id"] in known_ids
         if existing:
             update += 1
         else:
@@ -1052,29 +1096,35 @@ async def import_records(file: UploadFile = File(...), confirm: bool = False, pr
 
     # 确认写入：按 updatedAt 较新覆盖，新 id 追加
     if progress:
-        # 边写边报进度：NDJSON，一行一个事件；前端用 XHR 增量读取
+        # 边写边报进度：NDJSON，一行一个事件；前端用 fetch 流式读取
         return StreamingResponse(
-            _iter_import(cleaned, len(records), invalid, invalid_details, ids_renamed),
+            _iter_import(cleaned, invalid, invalid_details, ids_renamed),
             media_type="application/x-ndjson",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
-    written = failed = photos_skipped = photos_kept = 0
-    for payload, photos, photos_included in cleaned:
-        try:
-            res = _write_import_record(payload, photos, photos_included)
-            if res["written"]:
-                written += 1
-            photos_skipped += res["skipped"]
-            if res.get("kept"):
-                photos_kept += 1
-        except Exception as e:
-            # 单条失败不能让整批看起来"成功但少了几条"：计入 failed 并返回
-            failed += 1
-            print(f"[import] 写入失败 {payload.get('id')}: {e}")
-    return {"preview": False, "written": written, "failed": failed, "invalid": invalid,
-            "invalidDetails": invalid_details, "photosSkipped": photos_skipped,
-            "photosKept": photos_kept, "idsRenamed": ids_renamed}
+    written = failed = unchanged = photos_skipped = photos_kept = 0
+    # 整批复用一条连接：每条 4 次建连是导入慢（1000 条 ≈ 55s）的根因
+    with get_conn() as conn:
+        for payload, photos, photos_included in cleaned:
+            try:
+                res = _import_one(conn, payload, photos, photos_included)
+                if res["written"]:
+                    written += 1
+                elif res.get("unchanged"):
+                    unchanged += 1
+                photos_skipped += res["skipped"]
+                if res.get("kept"):
+                    photos_kept += 1
+            except Exception as e:
+                # 单条失败不能让整批看起来"成功但少了几条"：计入 failed 并返回
+                conn.rollback()
+                failed += 1
+                print(f"[import] 写入失败 {payload.get('id')}: {e}")
+    return {"preview": False, "written": written, "unchanged": unchanged, "failed": failed,
+            "invalid": invalid, "invalidDetails": invalid_details,
+            "photosSkipped": photos_skipped, "photosKept": photos_kept,
+            "idsRenamed": ids_renamed}
 
 
 # ---------- 静态托管（前端） ----------
@@ -1095,14 +1145,19 @@ if __name__ == "__main__":
     import threading
     import webbrowser
 
-    from .pathconf import (
-        find_free_port,
-        load_last_port,
-        save_last_port,
-    )
+    from .pathconf import find_free_port, load_last_port, parse_port, save_last_port
 
+    # PORT 环境变量写错（"abc"、99999）不能让进程崩在启动阶段：
+    # 非法值只提示一句，然后退回「上次端口 / 随机可用端口」。
     env_port = os.environ.get("PORT")
-    preferred = int(env_port) if env_port else load_last_port()
+    preferred = parse_port(env_port)
+    if env_port and preferred is None:
+        print(f"[FoodMap] PORT={env_port!r} 不是 1024–65535 的端口号，已忽略并自动选择端口。")
+    if preferred is None:
+        preferred = load_last_port()
+    hint = crypto.status_hint()
+    if hint:
+        print(f"[FoodMap] 注意：{hint}")
     port = find_free_port(preferred)
     save_last_port(port)
     url = f"http://127.0.0.1:{port}"
