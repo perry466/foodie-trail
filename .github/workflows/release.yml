@@ -1,0 +1,77 @@
+name: Release
+
+# 打一个 v* 标签 → 自动构建 Windows 安装包 + 绿色版 zip，挂到 Release 上。
+# 本地打包产物（build/、dist/、release/、*.exe）都在 .gitignore 里，不会进仓库。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不含 v），如 1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "v=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt -r requirements-build.txt
+
+      - name: Run tests (backend)
+        run: python -m pytest tests -q
+
+      - name: Build executable (PyInstaller)
+        run: pyinstaller FoodieTrail.spec --noconfirm
+
+      # 打包完先在 CI 里跑一次：起 exe → 建记录 → 导出 → 重启验证数据仍在 exe 同级 data/。
+      # 这一步在「发出去之前」拦住打坏的包（例如漏了静态资源、数据写到 _MEIPASS）。
+      - name: Smoke test packaged build
+        run: python scripts/smoke_packaged.py
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # 用完整路径调用 ISCC，避免 choco 的 shim 没进 PATH 时静默失败
+      - name: Build installer
+        shell: cmd
+        run: |
+          set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+          if not exist "%ISCC%" (echo [release] ISCC.exe not found & exit /b 1)
+          "%ISCC%" "installer\FoodieTrail.iss" /DMyAppVersion=${{ steps.ver.outputs.v }}
+
+      - name: Build portable zip
+        run: python scripts/make_release_zip.py ${{ steps.ver.outputs.v }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.v }}
+          name: Foodie Trail v${{ steps.ver.outputs.v }}
+          generate_release_notes: true
+          files: |
+            installer/Output/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64-setup.exe
+            release/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64.zip

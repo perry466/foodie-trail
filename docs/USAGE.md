@@ -18,6 +18,10 @@ The browser opens by itself at `http://127.0.0.1:<port>`. The port is random by 
 
 First launch creates `data/` with the database and a photo folder. Nothing leaves your machine.
 
+> 🖥 **Installed / portable build**: if you downloaded a Release instead of the source, you don't need
+> any of the above — double-click `FoodieTrail.exe` (or the desktop shortcut). No console appears; the
+> app opens the browser and lives in the tray, with `data/` next to the exe. Same UI, same data format.
+
 ---
 
 ## 🧭 2. The three views

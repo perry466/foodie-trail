@@ -82,6 +82,43 @@ That's it — **no Node.js, no build step, no database server**. The frontend sh
 
 ---
 
+---
+
+## 📦 Install on Windows (no Python required)
+
+Source deployment (above) stays exactly as it is. If you just want the app, grab a build from
+**[Releases](https://github.com/perry466/foodie-trail/releases)**:
+
+| Asset | What you get |
+| --- | --- |
+| `FoodieTrail-x.y.z-windows-x64-setup.exe` | per-user installer: desktop + Start-menu shortcuts, uninstall entry |
+| `FoodieTrail-x.y.z-windows-x64.zip` | portable folder: unzip anywhere, double-click `FoodieTrail.exe` |
+
+Both are the same build. There is **no console window**: the app starts, opens the browser, and
+stays in the **system tray** (right-click → Open / Open data folder / Quit). Closing the browser
+does not stop the server.
+
+- Data lives in `data/` **next to the exe** — copy that folder to back up or move machines.
+- The uninstaller **keeps `data/`** on purpose; delete the folder yourself to remove everything.
+- Upgrading: install the new version on top (or replace `FoodieTrail.exe` + `_internal/` in the
+  portable version); `data/` is never touched.
+
+### Building the installer yourself
+
+```bash
+pip install -r requirements.txt -r requirements-build.txt
+pyinstaller FoodieTrail.spec --noconfirm      # → dist/FoodieTrail/
+python scripts/smoke_packaged.py              # verifies exe launches + data persists
+
+# optional: Windows installer (needs Inno Setup 6)
+iscc installer\FoodieTrail.iss /DMyAppVersion=1.0.0
+python scripts/make_release_zip.py 1.0.0
+```
+
+Pushing a `v*` tag does all of this in CI and publishes both assets
+(`.github/workflows/release.yml`). Everything produced locally — `build/`, `dist/`, `release/`,
+`installer/Output/`, `*.exe`, `*.zip` — is git-ignored, so build artifacts never reach the repo.
+
 ## 📑 Table of Contents
 
 - [📋 1. Requirements](#1-requirements)
@@ -134,6 +171,14 @@ foodie-trail/
 │   └── USAGE_zh.md             # usage guide (Chinese)
 ├── tests/                      # pytest suite + Node front-end assertions
 ├── hooks/pre-commit            # optional guard: blocks data files on commit
+├── launcher.py                 # packaged entry: tray, single instance, file logging
+├── FoodieTrail.spec            # PyInstaller config (onedir, console disabled)
+├── requirements-build.txt      # build-only deps (pyinstaller, pystray)
+├── assets/icon.ico             # app + tray icon
+├── installer/FoodieTrail.iss   # Inno Setup script → Windows installer
+├── packaging/快速开始.txt       # quick-start note shipped inside the build
+├── scripts/                    # make_release_zip.py, smoke_packaged.py
+├── .github/workflows/release.yml  # tag → build exe + installer → GitHub Release
 ├── health_check.py             # read-only data health check
 ├── repo_guard.py               # allow-by-default guard rules used by the hook
 ├── seed_demo.py                # demo data (direct DB, `demo-` ids, clearable)
@@ -243,7 +288,7 @@ Drafts are included by default, and the current filters still apply — clear th
 ## 🧪 6. Tests and Data Health
 
 ```bash
-python -m pytest tests -q      # 133 backend cases
+python -m pytest tests -q      # 139 backend cases
 node tests/front-check.js      # 38 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
@@ -368,7 +413,11 @@ Not by design: the server binds `127.0.0.1` and rejects cross-origin requests, s
 **Q9: How do I wipe everything and start over?**
 Stop the app, delete `data/` (or set `FOODMAP_DATA_DIR` to a fresh folder), start again. Back up first if you might want the data back.
 
-**Q10: I see 100 "demo" records in the list**
+**Q10: Double-clicking the exe does nothing**
+The app has no console window. Give it a few seconds, then check the tray area (right-click → Open).
+If there is no tray icon either, read `data/app.log` next to the exe — startup errors are written there.
+
+**Q11: I see 100 "demo" records in the list**
 They come from `seed_demo.py` and all carry a `demo-` id prefix. Remove them with `python seed_demo.py --clear --yes` (this also deletes their photos).
 
 ---

@@ -47,12 +47,18 @@ __pycache__/
 .coverage
 htmlcov/
 
-# ---------- 打包 / 构建产物 ----------
+# ---------- 打包 / 构建产物（本地打包留下的东西一律不上传） ----------
 build/
 dist/
 *.spec
+# 例外：打包配置本身要进仓库，CI 靠它构建
+!FoodieTrail.spec
 *.exe
 *.msi
+*.zip
+# Inno Setup 输出 / 发布产物
+installer/Output/
+release/
 
 # ---------- 编辑器 & 系统 ----------
 .idea/

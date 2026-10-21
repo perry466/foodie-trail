@@ -1,17 +1,37 @@
-"""路径与全局常量配置"""
+"""路径与全局常量配置
+
+三种运行形态共用这一份：
+- 源码运行（`python -m app.main`）：`BASE_DIR` 是仓库根，`data/`、`static/` 都在它下面；
+- PyInstaller 打包（onedir）：静态资源在临时解包目录 `sys._MEIPASS`，
+  **数据目录必须放在 exe 同级**——放包内会在退出时随临时目录一起被删掉。
+"""
 import os
 import random
 import socket
+import sys
 
-# 项目根目录：taste-map/（即仓库根目录，app/ 的上级）
+# 代码所在目录：源码模式是仓库根；打包后是解包目录（内含 static/）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# 数据目录：默认 <仓库>/data；设置 FOODMAP_DATA_DIR 可改到别处。
+
+# 是否处于 PyInstaller 打包环境
+FROZEN = bool(getattr(sys, "frozen", False))
+
+if FROZEN:
+    # 资源目录：PyInstaller 把 datas 放到这里（onefile/onedir 都是 _MEIPASS）
+    BUNDLE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
+    # 应用目录：exe 所在目录，用户数据放这里，升级、重启都不会丢
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    BUNDLE_DIR = BASE_DIR
+    APP_DIR = BASE_DIR
+
+# 数据目录：默认 <应用目录>/data；设置 FOODMAP_DATA_DIR 可改到别处。
 # 用途：便携部署（数据放 U 盘/用户目录）、自动化测试隔离（tests/ 用临时目录，不碰真实数据）。
-DATA_DIR = os.path.abspath(os.environ.get("FOODMAP_DATA_DIR") or os.path.join(BASE_DIR, "data"))
+DATA_DIR = os.path.abspath(os.environ.get("FOODMAP_DATA_DIR") or os.path.join(APP_DIR, "data"))
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 DB_PATH = os.path.join(DATA_DIR, "foodmap.db")
 FERNET_KEY_PATH = os.path.join(DATA_DIR, ".fernet.key")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+STATIC_DIR = os.path.join(BUNDLE_DIR, "static")
 
 DB_VERSION = 1
 

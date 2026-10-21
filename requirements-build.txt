@@ -1,0 +1,7 @@
+# 仅打包成 exe / 安装包时需要（源码运行与测试都不需要它）
+# 安装：venv\Scripts\python.exe -m pip install -r requirements-build.txt
+#
+# - pyinstaller>=6.17：6.17 起正式支持 Python 3.14（本项目在 3.14 上开发）
+# - pystray：托盘图标；打包时由 collect_all 一并收进产物
+pyinstaller>=6.17
+pystray>=0.19

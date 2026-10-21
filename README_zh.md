@@ -82,6 +82,41 @@ start.bat          # 启动并自动打开浏览器
 
 ---
 
+---
+
+## 📦 Windows 安装版（不需要 Python）
+
+上面的源码部署方式完全保留，两种方式并存。只想直接用的话，去
+**[Releases](https://github.com/perry466/foodie-trail/releases)** 下载：
+
+| 文件 | 是什么 |
+| --- | --- |
+| `FoodieTrail-x.y.z-windows-x64-setup.exe` | 安装包：装到当前用户目录，自动建桌面 / 开始菜单快捷方式，带卸载项 |
+| `FoodieTrail-x.y.z-windows-x64.zip` | 绿色版：解压到任意目录，双击 `FoodieTrail.exe` 即用 |
+
+两者是同一份构建产物。**都不会弹黑窗口**：启动后自动打开浏览器，并在右下角托盘常驻
+（右键：打开 / 打开数据目录 / 退出）。关掉浏览器不会停服务。
+
+- 数据在 **exe 同级的 `data/`** 里——备份、换机器就是复制这个目录。
+- 卸载器**故意不删 `data/`**；要彻底清空请手动删除该目录。
+- 升级：安装版直接覆盖安装；绿色版替换 `FoodieTrail.exe` + `_internal/` 即可，`data/` 不受影响。
+
+### 自己打包
+
+```bash
+pip install -r requirements.txt -r requirements-build.txt
+pyinstaller FoodieTrail.spec --noconfirm      # → dist/FoodieTrail/
+python scripts/smoke_packaged.py              # 验证 exe 能启动、数据确实持久化
+
+# 可选：生成安装包（需要 Inno Setup 6）
+iscc installer\FoodieTrail.iss /DMyAppVersion=1.0.0
+python scripts/make_release_zip.py 1.0.0
+```
+
+推一个 `v*` 标签，CI 会自动跑完上面全部步骤并把两个产物挂到 Release
+（`.github/workflows/release.yml`）。本地产生的 `build/`、`dist/`、`release/`、
+`installer/Output/`、`*.exe`、`*.zip` 全在 `.gitignore` 里，不会进仓库。
+
 ## 📑 目录
 
 - [📋 一、环境要求](#一环境要求)
@@ -134,6 +169,14 @@ foodie-trail/
 │   └── USAGE_zh.md             # 使用指南（中文）
 ├── tests/                      # pytest 用例 + Node 前端断言
 ├── hooks/pre-commit            # 可选的提交前守卫（拦数据文件）
+├── launcher.py                 # 打包入口：托盘、单实例、日志落盘
+├── FoodieTrail.spec            # PyInstaller 配置（onedir、无控制台）
+├── requirements-build.txt      # 仅打包用的依赖（pyinstaller、pystray）
+├── assets/icon.ico             # 应用与托盘图标
+├── installer/FoodieTrail.iss   # Inno Setup 脚本 → Windows 安装包
+├── packaging/快速开始.txt       # 随包分发的快速开始
+├── scripts/                    # make_release_zip.py、smoke_packaged.py
+├── .github/workflows/release.yml  # 打 tag → 构建 exe + 安装包 → 发布 Release
 ├── health_check.py             # 只读数据体检
 ├── repo_guard.py               # 守卫规则（默认放行）
 ├── seed_demo.py                # 演示数据（直写库，`demo-` 前缀，可清）
@@ -243,7 +286,7 @@ data/
 ## 🧪 六、测试与数据体检
 
 ```bash
-python -m pytest tests -q      # 后端 133 例
+python -m pytest tests -q      # 后端 139 例
 node tests/front-check.js      # 前端 38 项断言（Node 18+）
 tests\run-tests.bat            # 两条一起跑，退出码 0 / 1 / 2（2 = 缺 Node）
 ```
@@ -368,7 +411,11 @@ cat hooks/pre-commit > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 **Q9：想全部清空重来**
 停掉应用，删掉 `data/`（或把 `FOODMAP_DATA_DIR` 指到一个新目录）再启动。删之前先备份。
 
-**Q10：列表里有 100 条「演示」记录**
+**Q10：双击 exe 没反应**
+这个程序没有黑窗口。等几秒看右下角托盘（右键 → 打开）；连托盘图标都没有的话，
+去看 exe 同级的 `data/app.log`，启动失败的报错都记在里面。
+
+**Q11：列表里有 100 条「演示」记录**
 那是 `seed_demo.py` 生成的，id 都带 `demo-` 前缀。用 `python seed_demo.py --clear --yes` 删掉（会连带删除它们的照片）。
 
 ---
