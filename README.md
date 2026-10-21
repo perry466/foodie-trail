@@ -114,7 +114,7 @@ foodie-trail/
 ## 测试
 
 ```bash
-python -m pytest tests -q      # 后端 127 个用例
+python -m pytest tests -q      # 后端 133 个用例
 node tests/front-check.js      # 前端 38 项断言（需 Node 18+）
 ```
 
@@ -152,6 +152,34 @@ python health_check.py --deep   # 额外逐张解码验证照片
 - 服务只监听 `127.0.0.1` 并校验请求来源，外部站点无法跨站读写记录、照片或 Key。
 - 迁移到另一台机器时，复制整个 `data/` 目录即可；只拷 `foodmap.db` 而不拷 `.fernet.key` 会导致已保存的 Key 无法解密。
 - `.fernet.key` 万一损坏（被清空、拷贝中断、杀软改写），启动时会自动把它改名留档并生成新钥匙继续运行——记录与照片不受影响，只是此前保存的高德 Key 需要重填。
+
+## 提交前守卫（避免把数据带进仓库）
+
+`data/` 已在 `.gitignore` 里，但历史上出现过"临时目录没被忽略、差点被 `git add -A` 带上去"的情况。
+仓库里有两道保险：
+
+1. **`repo_guard.py`**（只按路径判断，默认放行一切源码与资源）：
+
+   ```bash
+   python repo_guard.py            # 检查全部已跟踪文件（应为 0 命中）
+   python repo_guard.py --staged   # 检查暂存区
+   ```
+
+   拦：`data/`、`dev-context/`、`.workbuddy/`、`docs/ux/`、`*.db`、`*.key`/`*.pem`、`.env*`、
+   根目录 `*.json`（多为导出备份）、`.tmp-*`/`tmp/`、`venv/`、`__pycache__`、`dist/*.exe`。
+   **不拦**：`app/`、`static/`（含截图与 Leaflet 资源）、`tests/`（含 `test_backup_roundtrip.py`）、
+   文档、脚本、`hooks/`。
+
+2. **pre-commit 钩子**（每个 clone 各装一次，只影响本机）：
+
+   ```bash
+   cat hooks/pre-commit > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+   ```
+
+   提交时若暂存区里有上述文件会直接拒绝并列出文件名；确需跳过用 `git commit --no-verify`。
+
+`tests/test_repo_guard.py` 会拿 `git ls-files` 的真实清单断言"没有任何已跟踪文件被误拦"，
+所以以后新增核心文件也不会被守卫挡住。
 
 ## 许可证
 

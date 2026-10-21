@@ -17,6 +17,7 @@
 *.txt   text eol=lf
 .gitattributes text eol=lf
 .gitignore     text eol=lf
+hooks/pre-commit text eol=lf
 
 # 图片等二进制文件不做换行转换
 *.png   binary

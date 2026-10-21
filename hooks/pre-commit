@@ -1,0 +1,48 @@
+#!/bin/sh
+# 提交前守卫：拦截 data/、数据库、密钥、备份 JSON、临时产物等本地文件。
+# 规则集中在 repo_guard.py（已入库），这里只负责调用，避免两处维护。
+#
+# 退出码约定（repo_guard.py）：0 通过 / 2 发现不该提交的文件 / 1 脚本自身出错。
+# 守卫自己出 bug 时放行并提示，避免把人锁死在提交这一步。
+#
+# 想强行提交：git commit --no-verify
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+
+if [ ! -f repo_guard.py ]; then
+    echo "[guard] 未找到 repo_guard.py，跳过提交前检查（建议 git pull 同步）"
+    exit 0
+fi
+
+# 逐个探测"能真正跑起来"的解释器：venv 可能只剩一个坏掉的 python.exe
+PY=""
+if [ -x "venv/Scripts/python.exe" ] && "venv/Scripts/python.exe" -c "import sys" >/dev/null 2>&1; then
+    PY="venv/Scripts/python.exe"
+elif [ -x "venv/bin/python" ] && "venv/bin/python" -c "import sys" >/dev/null 2>&1; then
+    PY="venv/bin/python"
+elif command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
+    PY="python3"
+elif command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+    PY="python"
+elif command -v py >/dev/null 2>&1 && py -3 -c "import sys" >/dev/null 2>&1; then
+    PY="py -3"
+fi
+
+if [ -z "$PY" ]; then
+    echo "[guard] 找不到可用的 Python，跳过提交前检查"
+    exit 0
+fi
+
+echo "[guard] 检查暂存区里有没有本地数据/密钥…"
+$PY repo_guard.py --staged
+RC=$?
+
+if [ "$RC" -eq 0 ]; then
+    exit 0
+elif [ "$RC" -eq 2 ]; then
+    echo "[guard] 已阻止本次提交。"
+    exit 1
+else
+    echo "[guard] 守卫自身出错（退出码 $RC），本次放行；请检查 repo_guard.py。"
+    exit 0
+fi
