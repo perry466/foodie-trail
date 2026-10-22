@@ -23,8 +23,25 @@
 - `PIL` / `pystray`：托盘图标与图片处理，Pillow 的插件、pystray 的 win32 后端都是动态加载。
 - `console=False`：GUI 子系统，没有黑窗口；配合 `launcher.py` 里对
   stdout/stderr 的重定向，否则 uvicorn 写日志会把服务线程写死。
+- `version=`：exe 的版本资源（右键 属性 → 详细信息 里的文件版本）。文本由
+  `scripts/make_version_info.py` 从 `app/version.py` 生成，别在这里写死版本号。
 """
+import os
+import sys
+
 from PyInstaller.utils.hooks import collect_all
+
+# 版本资源：app/version.py → build/version_info.txt → exe 属性
+# 没有它，用户拿到包只能打开应用才知道是第几版；装上旧包时也没法自证。
+_here = os.path.abspath(SPECPATH)
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+from scripts.make_version_info import write_version_file  # noqa: E402
+
+VERSION_INFO = write_version_file()
+
+# version 只对 Windows 生效；其它平台传了会被忽略，这里显式分开更清楚
+_exe_extra = {"version": VERSION_INFO} if sys.platform == "win32" else {}
 
 datas = [
     ("static", "static"),              # 前端（无需构建，原样带上）
@@ -83,6 +100,7 @@ exe = EXE(
     console=False,                     # 无控制台窗口
     disable_windowed_traceback=False,
     icon="assets/icon.ico",
+    **_exe_extra,
 )
 
 coll = COLLECT(
