@@ -176,8 +176,9 @@ foodie-trail/
 ├── assets/icon.ico             # 应用与托盘图标
 ├── installer/FoodieTrail.iss   # Inno Setup 脚本 → Windows 安装包
 ├── packaging/快速开始.txt       # 随包分发的快速开始
-├── scripts/                    # make_release_zip.py、smoke_packaged.py
+├── scripts/                    # make_release_zip.py、smoke_packaged.py、release_notes.py
 ├── .github/workflows/release.yml  # 打 tag → 构建 exe + 安装包 → 发布 Release
+├── CHANGELOG.md                # 各版本变更；同时是 Release 正文的来源
 ├── health_check.py             # 只读数据体检
 ├── repo_guard.py               # 守卫规则（默认放行）
 ├── seed_demo.py                # 演示数据（直写库，`demo-` 前缀，可清）
@@ -287,7 +288,7 @@ data/
 ## 🧪 六、测试与数据体检
 
 ```bash
-python -m pytest tests -q      # 后端 183 例
+python -m pytest tests -q      # 后端 192 例
 node tests/front-check.js      # 前端 48 项断言（Node 18+）
 tests\run-tests.bat            # 两条一起跑，退出码 0 / 1 / 2（2 = 缺 Node）
 ```
@@ -443,6 +444,21 @@ cat hooks/pre-commit > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 ```bash
 tests\run-tests.bat      # Windows
 python -m pytest tests -q && node tests/front-check.js
+```
+
+### 发版
+
+版本号只在 `app/version.py` 一处。推 `v*` tag 会触发 CI 打包，tag 与 `VERSION` 不一致直接拒绝发布。
+
+每个版本还必须带变更说明：**打 tag 之前**在 [CHANGELOG.md](CHANGELOG.md) 里加一个
+`## [x.y.z]` 章节，`scripts/release_notes.py` 会把该章节抽成 Release 正文
+（再补上通用的「下载哪个文件 / 怎么升级 / 怎么校验」尾巴）；章节缺失时构建直接失败。
+分类沿用 Keep a Changelog：`新增 / 变更 / 修复 / 移除 / 安全性 / 破坏性变更`，空分类不写。
+
+```bash
+# 1) 改 app/version.py，2) 写 CHANGELOG 章节，3) commit，4) 打 tag
+python scripts/release_notes.py 2.0.0 --print   # 本地先预览正文
+git tag v2.0.0 && git push origin main v2.0.0
 ```
 
 ---

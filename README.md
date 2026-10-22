@@ -178,8 +178,9 @@ foodie-trail/
 ├── assets/icon.ico             # app + tray icon
 ├── installer/FoodieTrail.iss   # Inno Setup script → Windows installer
 ├── packaging/快速开始.txt       # quick-start note shipped inside the build
-├── scripts/                    # make_release_zip.py, smoke_packaged.py
+├── scripts/                    # make_release_zip.py, smoke_packaged.py, release_notes.py
 ├── .github/workflows/release.yml  # tag → build exe + installer → GitHub Release
+├── CHANGELOG.md                # per-release notes; also the Release body source
 ├── health_check.py             # read-only data health check
 ├── repo_guard.py               # allow-by-default guard rules used by the hook
 ├── seed_demo.py                # demo data (direct DB, `demo-` ids, clearable)
@@ -289,7 +290,7 @@ Drafts are included by default, and the current filters still apply — clear th
 ## 🧪 6. Tests and Data Health
 
 ```bash
-python -m pytest tests -q      # 183 backend cases
+python -m pytest tests -q      # 192 backend cases
 node tests/front-check.js      # 48 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
@@ -445,6 +446,23 @@ Run the whole suite before committing — the pre-commit hook only guards data, 
 ```bash
 tests\run-tests.bat      # Windows
 python -m pytest tests -q && node tests/front-check.js
+```
+
+### Releasing
+
+Version number lives in exactly one place: `app/version.py`. A `v*` tag starts the CI
+build, and a gate rejects the tag unless it matches `VERSION` exactly.
+
+Every release also needs its notes. Add a `## [x.y.z]` section to
+[CHANGELOG.md](CHANGELOG.md) *before* tagging — `scripts/release_notes.py` turns that
+section into the Release body (plus the shared download/verify/upgrade footer), and the
+build fails if the section is missing. Format follows Keep a Changelog: `新增 / 变更 /
+修复 / 移除 / 安全性 / 破坏性变更`, no empty categories.
+
+```bash
+# 1) bump app/version.py, 2) write the CHANGELOG section, 3) commit, 4) tag
+python scripts/release_notes.py 2.0.0 --print   # preview the body locally
+git tag v2.0.0 && git push origin main v2.0.0
 ```
 
 ---

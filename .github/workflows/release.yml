@@ -55,6 +55,12 @@ jobs:
             exit 1
           fi
 
+      # 闸门：发布必须带变更说明。正文统一从 CHANGELOG.md 抽，抽不到直接失败——
+      # 免得用户点进下载页只看到一串 "fix: ..." 的提交标题，不知道该下哪个文件。
+      # 放在构建之前，是为了五分钟后才发现漏写说明。
+      - name: Generate release notes from CHANGELOG
+        run: python scripts/release_notes.py ${{ steps.ver.outputs.v }}
+
       - name: Run tests (backend)
         run: python -m pytest tests -q
 
@@ -106,7 +112,7 @@ jobs:
         with:
           tag_name: v${{ steps.ver.outputs.v }}
           name: Foodie Trail v${{ steps.ver.outputs.v }}
-          generate_release_notes: true
+          body_path: release/release-notes.md
           files: |
             installer/Output/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64-setup.exe
             release/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64.zip
