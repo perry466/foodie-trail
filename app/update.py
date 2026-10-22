@@ -142,6 +142,31 @@ def _pick_asset(assets, suffix):
     return None
 
 
+def _rate_limit_hint(r):
+    """把 GitHub 的 403/429 翻成一句能指导下一步的话。
+
+    GitHub 有两种 403，长得一模一样但原因不同：
+    - **主额度用完**：`x-ratelimit-remaining: 0`，免认证每小时 60 次/IP；
+    - **次级限流**：短时间内反复请求触发，`x-ratelimit-remaining` 还有余量也照样 403，
+      有时带 `retry-after`。用户装好 v1.0.2 后连点几次「检查更新」撞上的就是这种。
+    不把这两种区分开，用户只会看到一句没用的「HTTP 403」。
+    """
+    remain = r.headers.get("x-ratelimit-remaining")
+    reset = r.headers.get("x-ratelimit-reset")
+    retry = r.headers.get("retry-after")
+    if remain == "0":
+        wait = ""
+        try:
+            mins = max(1, int((int(reset) - time.time()) // 60) + 1)
+            wait = f"，约 {mins} 分钟后恢复"
+        except Exception:
+            pass
+        return f"GitHub 接口额度已用完（免认证每小时 60 次）{wait}"
+    if retry:
+        return f"GitHub 暂时限制了这个 IP，请 {retry} 秒后再试"
+    return "GitHub 拒绝了这个请求（短时间内重复检查，或代理出口被限制）"
+
+
 def _fetch_latest():
     """请求 GitHub latest release。调用方负责兜住所有异常。"""
     headers = {
@@ -155,6 +180,13 @@ def _fetch_latest():
     with httpx.Client(timeout=CHECK_TIMEOUT, follow_redirects=True, trust_env=trust_env) as c:
         r = c.get(API_LATEST, headers=headers)
     if r.status_code != 200:
+        if r.status_code in (403, 429):
+            hint = _rate_limit_hint(r)
+            try:
+                msg = str((r.json() or {}).get("message") or "").strip()
+            except Exception:
+                msg = ""
+            raise UpdateError(f"{hint}｜{msg}" if msg else hint, 502)
         raise UpdateError(f"GitHub 返回 HTTP {r.status_code}", 502)
     d = r.json()
     tag = str(d.get("tag_name") or "")
@@ -197,6 +229,8 @@ def _build_result(cache, cached=False, reason=""):
         "hasSetup": bool(setup and setup.get("url")),
         "hasZip": bool(cache.get("zip") and cache["zip"].get("url")),
     }
+    if cache.get("via"):
+        result["via"] = cache["via"]
     if reason:
         result["reason"] = reason
     return result
@@ -212,7 +246,9 @@ def check(force=False):
         fresh = _fetch_latest()
     except Exception as e:
         msg = getattr(e, "message", None) or f"{type(e).__name__}: {e}"
-        # 查不到但手里有旧结果：给出旧结果并标注过期，让用户仍能看到下载入口
+        # 查不到但手里有旧结果：给出旧结果并标注过期，让用户仍能看到下载入口。
+        # 没有走「网页版 releases 兜底」——实测国内网络下 github.com 网页整体不可达
+        # （api.github.com 却通），那条路只会让用户多等 6–10 秒再失败。
         if cache and parse_version(cache.get("latest")):
             out = _build_result(cache, cached=True, reason=msg)
             out["stale"] = True

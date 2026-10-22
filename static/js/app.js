@@ -467,7 +467,7 @@ const App = {
       draftNotice:'', draftSaved:false, _suppressDraft:false,
       /* 内部状态：下划线开头，Vue 3 不会代理到实例，只能在 JS 方法里用 this._xxx 访问，
          严禁出现在模板表达式中（生产版会抛 ReferenceError，整个组件渲染失败） */
-      _mapSeq:0, _mmT:null, _poiSeq:0, _dlTimer:null,
+      _mapSeq:0, _mmT:null, _poiSeq:0, _dlTimer:null, _lastCheckAt:0,
       /* 保存中标志：模板要用（禁用按钮 + 文案切换），所以必须用普通名字 */
       saving:false,
     };
@@ -1100,23 +1100,31 @@ const App = {
     /* force=true 跳过后端 6 小时缓存；启动时用 false，几乎不产生网络开销 */
     async checkUpdate(force){
       if(this.updateBusy) return;
+      // 手动检查加 20 秒防抖：GitHub 对短时间内的突发请求会直接回 403（次级限流），
+      // 连点「检查更新」正好踩中，而且响应里看不出原因，只会显示一句 HTTP 403。
+      if(force && this._lastCheckAt && Date.now()-this._lastCheckAt < 20000){
+        this.updateMsg='刚检查过，请等十几秒再试（GitHub 会限制过密的请求）';
+        return;
+      }
       this.updateBusy=true;
-      if(force) this.updateMsg='正在检查…';
+      if(force){ this.updateMsg='正在检查…'; this._lastCheckAt=Date.now(); }
       try{
         const r=await API.get('/api/update/check'+(force?'?force=1':''));
         this.updateInfo=r||{};
         if(!r || r.ok===false){
           // 网络失败只写一行灰字，不弹窗、不打断：GitHub 在国内时通时不通
-          this.updateMsg='检查失败：'+((r&&r.reason)||'网络不可用');
+          this.updateMsg='检查失败：'+((r&&r.reason)||'网络不可用')+'（可直接前往 Release 页面查看）';
         }else if(r.hasUpdate){
-          this.updateMsg='发现新版本 v'+r.latest;
+          this.updateMsg = r.degraded
+            ? ('发现新版本 v'+r.latest+'，但 GitHub 接口受限，只能手动下载')
+            : ('发现新版本 v'+r.latest);
           this._showUpdateBanner();
         }else{
           this.updateMsg='已是最新版本（v'+r.current+'）';
           this.updateBanner=false;
         }
       }catch(e){
-        this.updateMsg='检查失败：'+e.message;
+        this.updateMsg='检查失败：'+e.message+'（可直接前往 Release 页面查看）';
       }finally{
         this.updateBusy=false;
       }

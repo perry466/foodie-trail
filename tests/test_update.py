@@ -182,6 +182,58 @@ def test_settings_declares_no_proxy_escape_hatch():
     assert "FOODMAP_UPDATE_NO_PROXY" in text
 
 
+# ---------- 403 的三种原因要说清楚 ----------
+def _resp(headers):
+    class R:
+        pass
+    r = R()
+    r.headers = headers
+    r.status_code = 403
+    return r
+
+
+def test_rate_limit_hint_distinguishes_quota_from_burst():
+    """GitHub 的两种 403 长得一样但处置完全不同，文案必须分开。
+
+    用户装上 v1.0.2 后连点「检查更新」拿到的是次级限流（额度还有，照样 403），
+    如果只显示「HTTP 403」，他会以为更新功能坏了。
+    """
+    burst = upd._rate_limit_hint(_resp({"x-ratelimit-remaining": "42", "retry-after": "60"}))
+    assert "60" in burst and "限制" in burst
+
+    quota = upd._rate_limit_hint(_resp({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "0"}))
+    assert "额度已用完" in quota
+
+    other = upd._rate_limit_hint(_resp({}))
+    assert "拒绝" in other
+
+
+def test_fetch_latest_403_raises_with_actionable_message(monkeypatch):
+    """403 时抛出的必须是能指导下一步的话，不是裸的状态码。"""
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def get(self, *a, **k):
+            r = _resp({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "0"})
+            r.json = lambda: {"message": "API rate limit exceeded"}
+            return r
+
+    monkeypatch.setattr(upd.httpx, "Client", FakeClient)
+    with pytest.raises(upd.UpdateError) as e:
+        upd._fetch_latest()
+    assert "额度" in e.value.message
+    assert "403" not in e.value.message.split("｜")[0]
+
+
+def test_check_does_not_attempt_web_fallback(monkeypatch):
+    """不做网页版兜底：国内网络下 github.com 整体不可达，只会多等 6–10 秒。"""
+    assert not hasattr(upd, "_fetch_latest_from_web")
+
+
 # ---------- 接口 ----------
 def test_version_endpoint(client):
     r = client.get("/api/app/version")
