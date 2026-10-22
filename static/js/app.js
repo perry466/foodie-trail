@@ -1119,8 +1119,8 @@ const App = {
         const r=await API.get('/api/update/check'+(force?'?force=1':''));
         this.updateInfo=r||{};
         if(!r || r.ok===false){
-          // 网络失败只写一行灰字，不弹窗、不打断：GitHub 在国内时通时不通
-          this.updateMsg='检查失败：'+((r&&r.reason)||'网络不可用')+'（可直接前往 Release 页面查看）';
+          // 后端的 reason 已经是给人看的完整句子（原因+等多久+去哪看），直接展示
+          this.updateMsg=(r&&r.reason)||'暂时无法检查更新，请稍后再试';
         }else if(r.hasUpdate){
           this.updateMsg = r.degraded
             ? ('发现新版本 v'+r.latest+'，但 GitHub 接口受限，只能手动下载')
@@ -1131,7 +1131,8 @@ const App = {
           this.updateBanner=false;
         }
       }catch(e){
-        this.updateMsg='检查失败：'+e.message+'（可直接前往 Release 页面查看）';
+        // 走到这里多是本机网络断了，e.message 是英文异常名，不给人看
+        this.updateMsg='暂时无法连接 GitHub，请检查网络后重试';
       }finally{
         this.updateBusy=false;
       }

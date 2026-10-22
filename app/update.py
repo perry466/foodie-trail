@@ -152,6 +152,9 @@ def _rate_limit_hint(r):
     - **次级限流**：短时间内反复请求触发，`x-ratelimit-remaining` 还有余量也照样 403，
       有时带 `retry-after`。用户装好 v1.0.2 后连点几次「检查更新」撞上的就是这种。
     不把这两种区分开，用户只会看到一句没用的「HTTP 403」。
+
+    注意文案是给用户看的：不要拼接 GitHub 返回的英文原文（v1.0.4 干过，
+    结果用户看到一大段「But here's the good news...」），话要说完、给出路。
     """
     remain = r.headers.get("x-ratelimit-remaining")
     reset = r.headers.get("x-ratelimit-reset")
@@ -160,13 +163,15 @@ def _rate_limit_hint(r):
         wait = ""
         try:
             mins = max(1, int((int(reset) - time.time()) // 60) + 1)
-            wait = f"，约 {mins} 分钟后恢复"
+            wait = f"，约 {mins} 分钟后自动恢复"
         except Exception:
             pass
-        return f"GitHub 接口额度已用完（免认证每小时 60 次）{wait}"
+        return ("GitHub 接口额度已用完（免认证每小时 60 次，按 IP 计算，"
+                f"共用出口的网络的额度是大家共享的）{wait}；"
+                "也可以直接去 Release 页面查看新版本")
     if retry:
         return f"GitHub 暂时限制了这个 IP，请 {retry} 秒后再试"
-    return "GitHub 拒绝了这个请求（短时间内重复检查，或代理出口被限制）"
+    return "GitHub 暂时拒绝了这次检查（请求太密或网络出口被限制），请稍后再试"
 
 
 def _proxy_url():
@@ -262,15 +267,14 @@ def _fetch_latest():
 
 
 def _http_error(r):
-    """把非 200 响应翻译成人能看懂的 UpdateError。"""
+    """把非 200 响应翻译成人能看懂的 UpdateError。
+
+    不拼 GitHub 返回的英文原文——那是给开发者看的（还带用户 IP），
+    用户只需要知道发生了什么、等多久、还能去哪看。
+    """
     if r.status_code in (403, 429):
-        hint = _rate_limit_hint(r)
-        try:
-            msg = str((r.json() or {}).get("message") or "").strip()
-        except Exception:
-            msg = ""
-        return UpdateError(f"{hint}｜{msg}" if msg else hint, 502)
-    return UpdateError(f"GitHub 返回 HTTP {r.status_code}", 502)
+        return UpdateError(_rate_limit_hint(r), 502)
+    return UpdateError(f"GitHub 服务暂时不可用（HTTP {r.status_code}），请稍后再试", 502)
 
 
 def _parse_release(d):
@@ -337,7 +341,9 @@ def check(force=False):
     try:
         fresh = _fetch_latest()
     except Exception as e:
-        msg = getattr(e, "message", None) or f"{type(e).__name__}: {e}"
+        # UpdateError 的 message 已经是给人看的完整句子；
+        # 其余异常（超时/DNS 失败）只留异常名做线索，包一句人话。
+        msg = getattr(e, "message", None) or f"网络连接失败（{type(e).__name__}），请稍后再试"
         # 查不到但手里有旧结果：给出旧结果并标注过期，让用户仍能看到下载入口。
         # 没有走「网页版 releases/latest 兜底」：那条路只能回答"有没有新版"，
         # 拿不到 sha256 也就无法自动安装，实现成本换不来收益。

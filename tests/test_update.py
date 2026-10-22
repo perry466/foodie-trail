@@ -127,13 +127,19 @@ def test_expired_cache_triggers_refresh(monkeypatch):
 
 # ---------- 失败必须静默 ----------
 def test_check_never_raises_on_network_error(monkeypatch):
-    """GitHub 不通时返回 ok=false，绝不能让路由 500。"""
+    """GitHub 不通时返回 ok=false，绝不能让路由 500。
+
+    reason 要是人话：异常名只做括号里的线索（"网络连接失败（RuntimeError）…"），
+    不能像以前那样直接把 `RuntimeError: boom` 甩给用户。
+    """
     _clear_cache()
     monkeypatch.setattr(upd, "_fetch_latest",
                         lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     r = upd.check(force=True)
     assert r["ok"] is False
-    assert "boom" in r["reason"]
+    assert r["reason"].startswith("网络连接失败")
+    assert "RuntimeError" in r["reason"]
+    assert "boom" not in r["reason"]          # 异常详情不外泄
     assert r["current"] == VERSION
 
 
@@ -209,7 +215,12 @@ def test_rate_limit_hint_distinguishes_quota_from_burst():
 
 
 def test_fetch_latest_403_raises_with_actionable_message(monkeypatch):
-    """403 时抛出的必须是能指导下一步的话，不是裸的状态码。"""
+    """403 时抛出的必须是能指导下一步的话，不是裸的状态码。
+
+    v1.0.4 把 GitHub 的英文原文拼在了中文后面，用户看到一整段
+    「API rate limit exceeded for 203.10.98.186. (But here's the good news:...)」
+    ——那不是给人看的，还把用户 IP 泄露在了界面上。
+    """
     class FakeClient:
         def __init__(self, *a, **k):
             pass
@@ -219,14 +230,19 @@ def test_fetch_latest_403_raises_with_actionable_message(monkeypatch):
             return False
         def get(self, *a, **k):
             r = _resp({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "0"})
-            r.json = lambda: {"message": "API rate limit exceeded"}
+            r.json = lambda: {"message": "API rate limit exceeded for 203.0.113.9"}
             return r
 
     monkeypatch.setattr(upd.httpx, "Client", FakeClient)
     with pytest.raises(upd.UpdateError) as e:
         upd._fetch_latest()
-    assert "额度" in e.value.message
-    assert "403" not in e.value.message.split("｜")[0]
+    msg = e.value.message
+    assert "额度" in msg
+    assert "403" not in msg
+    # 用户界面上不许出现 GitHub 的英文原文，也不许出现拼接分隔符
+    assert "rate limit" not in msg.lower()
+    assert "203.0.113.9" not in msg
+    assert "｜" not in msg
 
 
 def test_check_does_not_attempt_web_fallback(monkeypatch):
