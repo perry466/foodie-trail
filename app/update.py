@@ -31,6 +31,10 @@ from .version import VERSION
 
 REPO = "perry466/foodie-trail"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
+# 网页版「最新发布」：不消耗 API 额度，302 的 Location 里带 tag。
+# api.github.com 的匿名额度只有 60 次/小时且按出口 IP 计，共享出口很容易耗尽。
+HTML_LATEST = f"https://github.com/{REPO}/releases/latest"
+_TAG_IN_URL = re.compile(r"/releases/tag/v?(\d+\.\d+\.\d+)")
 HTML_RELEASES = f"https://github.com/{REPO}/releases"
 
 # 检查结果缓存 30 分钟。
@@ -278,7 +282,12 @@ def _fetch_latest():
             last_err = e
         except Exception as e:                # 超时/连接失败：换下一条路
             last_err = UpdateError(f"{type(e).__name__}: {e}", 502)
-    raise last_err or UpdateError("无法连接 GitHub", 502)
+    # API 的所有路都失败（最常见：匿名额度耗尽，60 次/小时按出口 IP 计）。
+    # 退回不占额度的网页版，至少能正确回答「有没有新版」，而不是让旧缓存冒充结论。
+    try:
+        return _fetch_latest_html()
+    except Exception:
+        raise last_err or UpdateError("无法连接 GitHub", 502)
 
 
 def _http_error(r):
@@ -308,6 +317,47 @@ def _parse_release(d):
         "setup": _pick_asset(assets, "-setup.exe"),
         "zip": _pick_asset(assets, ".zip"),
     }
+
+
+def _fetch_latest_html():
+    """`api.github.com` 不可用时的兜底：读 `releases/latest` 的 302 指向。
+
+    为什么要有这条路：API 匿名额度只有 60 次/小时，且按**出口 IP** 计。
+    发版日反复检查、或运营商/代理共享出口时，额度很容易被别人用光，
+    这时应用只会说「联网失败」——用户看到的却是「已是最新版本」（旧缓存），
+    明明发了新版却查不到。而 `github.com/.../releases/latest` 是普通网页，
+    不占 API 额度，302 的 `Location` 里就带着最新 tag。
+
+    代价：拿不到资产列表与 sha256，也就无法自动安装。所以返回的结果带
+    `degraded`，前端据此引导用户走「复制下载链接」手动下载。
+    """
+    last_err = None
+    for cand in _client_candidates():
+        try:
+            with _client(CHECK_TIMEOUT, cand=cand, follow_redirects=False) as c:
+                r = c.get(HTML_LATEST, headers={"User-Agent": f"FoodieTrail/{VERSION}"})
+            m = _TAG_IN_URL.search(str(r.headers.get("location") or ""))
+            if not m:                      # 有的路径会直接给 200 页面，再从自身 URL 找
+                m = _TAG_IN_URL.search(str(r.url))
+            if not m:
+                raise UpdateError("发布页没有给出可识别的版本号", 502)
+            ver = m.group(1)
+            return {
+                "checkedAt": int(time.time()),
+                "latest": ver,
+                "tag": "v" + ver,
+                "notes": "",
+                "publishedAt": "",
+                "htmlUrl": f"https://github.com/{REPO}/releases/tag/v{ver}",
+                "setup": None,
+                "zip": None,
+                "degraded": True,
+            }
+        except UpdateError as e:
+            last_err = e
+        except Exception as e:
+            last_err = UpdateError(f"{type(e).__name__}: {e}", 502)
+    raise last_err or UpdateError("无法连接 GitHub", 502)
 
 
 def _build_result(cache, cached=False, reason=""):
@@ -340,6 +390,8 @@ def _build_result(cache, cached=False, reason=""):
         "downloadName": (setup or {}).get("name") or "",
         "downloadSize": int((setup or {}).get("size") or 0),
     }
+    if cache.get("degraded"):
+        result["degraded"] = True
     if cache.get("via"):
         result["via"] = cache["via"]
     if reason:
@@ -373,7 +425,10 @@ def check(force=False):
             "mode": detect_mode(),
             "htmlUrl": HTML_RELEASES,
         }
-    _write_cache(fresh)
+    # 降级结果只有版本号、没有任何资产与 sha256：写进缓存会让下一次「下载」拿到空地址，
+    # 还会把上一份完整的 Release 信息冲掉。只在本次返回，不落盘。
+    if not fresh.get("degraded"):
+        _write_cache(fresh)
     return _build_result(fresh)
 
 

@@ -656,3 +656,87 @@ def test_update_cache_is_valid_json(tmp_path):
     upd._write_cache(_release())
     with open(upd.UPDATE_CACHE_PATH, encoding="utf-8") as f:
         assert json.load(f)["latest"] == "9.9.9"
+
+
+# ---------- API 额度耗尽时的网页版兜底 ----------
+# 背景：api.github.com 的匿名额度只有 60 次/小时且按出口 IP 计。发版日反复检查
+# 很容易把额度用光，此时应用原来只会说「联网失败」并回退旧缓存，界面却显示
+# 「已是最新版本」——明明发了新版也查不到（2026-10-22 用户实踩）。
+
+class _HtmlResp:
+    def __init__(self, status=302, location=""):
+        self.status_code = status
+        self.headers = {"location": location} if location else {}
+        self.url = upd.HTML_LATEST
+        self.text = ""
+
+
+class _FakeClient:
+    def __init__(self, resp):
+        self._resp = resp
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, headers=None, **kw):
+        if callable(self._resp):
+            return self._resp(url)
+        return self._resp
+
+
+def test_html_fallback_reads_tag_from_redirect(monkeypatch):
+    """302 的 Location 里带 tag —— 不占 API 额度也能知道最新版本。"""
+    monkeypatch.setattr(upd, "_client_candidates", lambda: [{"trust_env": False}])
+    monkeypatch.setattr(upd, "_client", lambda *a, **k: _FakeClient(
+        _HtmlResp(302, "https://github.com/perry466/foodie-trail/releases/tag/v9.9.9")))
+    d = upd._fetch_latest_html()
+    assert d["latest"] == "9.9.9"
+    assert d["tag"] == "v9.9.9"
+    assert d["degraded"] is True
+    assert d["setup"] is None and d["zip"] is None     # 拿不到资产，只能手动下载
+
+
+def test_html_fallback_rejects_unparseable(monkeypatch):
+    """没有 302、URL 里也没有 tag：宁可报错，也不能编一个版本号出来。"""
+    monkeypatch.setattr(upd, "_client_candidates", lambda: [{"trust_env": False}])
+    monkeypatch.setattr(upd, "_client", lambda *a, **k: _FakeClient(_HtmlResp(200, "")))
+    with pytest.raises(upd.UpdateError):
+        upd._fetch_latest_html()
+
+
+def test_api_failure_falls_back_to_html(monkeypatch):
+    """API 所有路都失败时，_fetch_latest 自己退到网页版，而不是直接抛错。"""
+    monkeypatch.setattr(upd, "_client_candidates", lambda: [{"trust_env": False}])
+
+    def resp(url):
+        if "api.github.com" in str(url):
+            raise RuntimeError("rate limit exceeded")
+        return _HtmlResp(302, "https://github.com/perry466/foodie-trail/releases/tag/v9.9.9")
+
+    monkeypatch.setattr(upd, "_client", lambda *a, **k: _FakeClient(resp))
+    d = upd._fetch_latest()
+    assert d["latest"] == "9.9.9" and d["degraded"] is True
+
+
+def test_degraded_result_is_not_written_to_cache(monkeypatch):
+    """降级结果只有版本号：写进缓存会让下次下载拿到空地址，还会冲掉完整的 Release 信息。"""
+    _clear_cache()
+    degraded = {
+        "checkedAt": int(time.time()), "latest": "9.9.9", "tag": "v9.9.9",
+        "notes": "", "publishedAt": "", "htmlUrl": upd.HTML_RELEASES,
+        "setup": None, "zip": None, "degraded": True,
+    }
+    monkeypatch.setattr(upd, "_fetch_latest", lambda: degraded)
+    writes = []
+    monkeypatch.setattr(upd, "_write_cache", lambda payload: writes.append(payload))
+
+    r = upd.check(force=True)
+
+    assert r["hasUpdate"] is True                 # 至少要说清「有新版」
+    assert r["degraded"] is True
+    assert r["canAutoInstall"] is False           # 没有 sha256，绝不允许自动装
+    assert r["downloadUrl"] == ""
+    assert writes == []                           # 不落盘

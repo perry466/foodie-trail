@@ -1226,6 +1226,14 @@ const App = {
             : ('发现新版本 v'+r.latest);
           this.updateMsg=m+this._cacheNote(r);
           this._showUpdateBanner();
+        }else if(r.stale){
+          // 联网失败兜底：此时「已是最新版本」这个断言根本不成立——根本没查成。
+          // 必须明说失败 + 显示的是多久之前的结果，否则刚发布的新版会被旧缓存挡住。
+          const mins=r.checkedAt?Math.max(1,Math.round((Date.now()/1000-r.checkedAt)/60)):0;
+          const when=mins>0?mins+' 分钟前':'';
+          this.updateMsg='检查更新失败：'+((r.reason||'网络问题').replace(/。$/,''))+
+            '。下面是 '+when+'的缓存结果（当前 v'+r.current+'）。点「检查更新」重试';
+          this.updateBanner=false;
         }else{
           this.updateMsg='已是最新版本（v'+r.current+'）'+this._cacheNote(r);
           this.updateBanner=false;
