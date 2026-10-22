@@ -477,9 +477,24 @@ def _download_worker(asset):
                 os.remove(part)
         except Exception:
             pass
-        msg = getattr(e, "message", None) or f"{type(e).__name__}: {e}"
         with _LOCK:
-            _DL.update({"state": "error", "error": msg})
+            _DL.update({"state": "error", "error": _download_error_msg(e)})
+
+
+def _download_error_msg(e):
+    """下载失败要给人看的话。用户在界面上看到过
+    「ConnectError: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in
+    violation of protocol (_ssl.c:1010)」——那是异常原文，不是给人读的。"""
+    if isinstance(e, UpdateError):
+        return e.message
+    text = str(e)
+    if "SSL" in text or "EOF" in text or "RESET" in text.upper():
+        return "网络传输被中断（连接被重置，常见于网络波动或被干扰），两条网络路径都试过了"
+    if "timed out" in text.lower() or "timeout" in text.lower():
+        return "连接超时，两条网络路径都试过了"
+    if "rate limit" in text.lower() or "403" in text:
+        return "下载地址被 GitHub 限流，请稍后再试"
+    return f"下载失败（{type(e).__name__}），请稍后再试"
 
 
 # ---------- 安装 ----------
@@ -525,14 +540,19 @@ def install():
         f'start "" /wait "{target}" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES & '
         f'start "" "{exe}"'
     )
-    flags = 0
     if os.name == "nt":
-        # DETACHED_PROCESS：父进程退出后这条 cmd 链要继续跑完
-        flags = 0x00000008 | 0x08000000      # DETACHED_PROCESS | CREATE_NO_WINDOW
-    try:
-        subprocess.Popen(["cmd.exe", "/c", cmd], close_fds=True, creationflags=flags)
-    except Exception as e:
-        raise UpdateError(f"启动安装器失败：{e}", 500)
+        # 只用 CREATE_NO_WINDOW（隐藏控制台）。踩过的坑：
+        # ① 不能用列表传参——Popen 会把整条链当成一个参数做 list2cmdline，
+        #    里面的引号全被转义成 \"，而 cmd 不认 \"，`start ""` 被拆成 `start \`，
+        #    用户看到「Windows 找不到 '\' 文件」（v1.0.7 首次真机验证时踩中）。
+        #    必须把整行作为字符串传入，Windows 下原样进 lpCommandLine。
+        # ② 不能 DETACHED_PROCESS|CREATE_NO_WINDOW 一起用——语义矛盾，
+        #    实测会弹出 ping 的黑窗。
+        try:
+            subprocess.Popen("cmd.exe /c " + cmd, close_fds=True,
+                             creationflags=0x08000000)      # CREATE_NO_WINDOW
+        except Exception as e:
+            raise UpdateError(f"启动安装器失败：{e}", 500)
 
     _delayed_exit(1.2)
     return {"ok": True, "willExit": True}

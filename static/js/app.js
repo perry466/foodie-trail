@@ -483,6 +483,13 @@ const App = {
     },
     /* 运行形态：设置面板里显示「安装版 / 绿色版 / 源码版」 */
     modeText(){ return this.appMode==='installer' ? '安装版' : (this.appMode==='portable' ? '绿色版' : '源码版'); },
+
+    /* 更新说明是 GitHub Release 的 markdown 原文，直接显示会露出
+       **Full Changelog** 这种标记（用户截图踩过）；这里只做无害清洗，
+       把加粗标记去掉，其余原样保留。 */
+    updateNotes(){
+      return (this.updateInfo.notes||'').replace(/\*\*/g,'').trim();
+    },
     /* 不能自动安装时，按形态给对应的操作——源码版没 exe 可替换，让它去"替换 _internal"是错的 */
     updateModeHint(){
       if(this.updateInfo && this.updateInfo.canAutoInstall) return '';

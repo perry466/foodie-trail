@@ -182,6 +182,50 @@ def test_safe_download_path_accepts_generated_name():
     assert os.path.dirname(p) == os.path.abspath(upd.DOWNLOADS_DIR)
 
 
+def test_install_spawns_cmd_chain_as_plain_string(monkeypatch, tmp_path):
+    """cmd 链必须以**字符串**传给 Popen，且只用 CREATE_NO_WINDOW。
+
+    v1.0.7 真机踩中：用列表传参时 Popen 做 list2cmdline，把链里的引号转义成
+    `\\"`，而 cmd 不认 `\\"`，`start ""` 被拆成 `start \\`，
+    用户看到「Windows 找不到 '\\' 文件」；DETACHED_PROCESS 与
+    CREATE_NO_WINDOW 同用语义矛盾，还会弹出 ping 的黑窗。
+    """
+    target = tmp_path / "FoodieTrail-9.9.9-windows-x64-setup.exe"
+    target.write_bytes(b"x" * 20)                      # 与 _release() 里的 size 一致
+    monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
+    monkeypatch.setattr(upd, "_read_cache", lambda: _release())
+    monkeypatch.setattr(upd, "_safe_download_path", lambda name: str(target))
+    monkeypatch.setattr(upd.os, "name", "nt")
+    monkeypatch.setattr(upd.sys, "executable", r"C:\app\FoodieTrail.exe")
+    monkeypatch.setattr(upd, "_delayed_exit", lambda s: None)   # 不许真的退出
+    captured = {}
+
+    def fake_popen(cmdline, **kw):
+        captured["cmdline"] = cmdline
+        captured["flags"] = kw.get("creationflags")
+
+    monkeypatch.setattr(upd.subprocess, "Popen", fake_popen)
+    upd.install()
+
+    line = captured["cmdline"]
+    assert isinstance(line, str) and line.startswith("cmd.exe /c ")
+    assert '\\"' not in line                    # 不允许二次转义
+    assert 'start "" /wait' in line             # start 的空标题要原样保留
+    assert str(target) in line and "/VERYSILENT" in line
+    assert captured["flags"] == 0x08000000      # 只用 CREATE_NO_WINDOW
+
+
+def test_download_error_messages_are_human():
+    """下载失败提示里不许出现异常原文（v1.0.7 用户看到过 SSL: UNEXPECTED_EOF...）。"""
+    assert upd._download_error_msg(upd.UpdateError("没有校验值")) == "没有校验值"
+    ssl_err = RuntimeError("ConnectError: [SSL: UNEXPECTED_EOF_WHILE_READING] "
+                           "EOF occurred in violation of protocol (_ssl.c:1010)")
+    msg = upd._download_error_msg(ssl_err)
+    assert "SSL" not in msg and "EOF" not in msg and "中断" in msg
+    assert "超时" in upd._download_error_msg(RuntimeError("read timed out"))
+    assert "RuntimeError" in upd._download_error_msg(RuntimeError("weird thing"))
+
+
 def test_settings_declares_no_proxy_escape_hatch():
     """必须留一个「强制直连」的开关：某些机器必须走代理，另一些必须绕过。"""
     text = open(os.path.join(os.path.dirname(upd.__file__), "update.py"), encoding="utf-8").read()

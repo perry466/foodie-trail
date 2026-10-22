@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261022e" />
+  <link rel="stylesheet" href="/css/style.css?v=20261022f" />
 </head>
 <body>
   <!-- 地图：独立于 Vue 管控，避免重渲染破坏地图实例 -->
@@ -421,7 +421,7 @@
                   <b>可升级到 v{{ updateInfo.latest }}</b>
                   <span v-if="updateInfo.publishedAt">{{ fmtDate(updateInfo.publishedAt) }}</span>
                 </div>
-                <p class="upd-notes" v-if="updateInfo.notes">{{ updateInfo.notes }}</p>
+                <p class="upd-notes" v-if="updateNotes">{{ updateNotes }}</p>
 
                 <div class="upd-bar" v-if="dl.state==='downloading'||dl.state==='verifying'">
                   <div class="upd-bar-fill" :style="{width: (dl.state==='verifying'?100:dl.percent)+'%'}"></div>
@@ -778,6 +778,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261022e"></script>
+  <script src="/js/app.js?v=20261022f"></script>
 </body>
 </html>
