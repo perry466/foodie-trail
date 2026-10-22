@@ -286,7 +286,7 @@ data/
 ## 🧪 六、测试与数据体检
 
 ```bash
-python -m pytest tests -q      # 后端 173 例
+python -m pytest tests -q      # 后端 175 例
 node tests/front-check.js      # 前端 38 项断言（Node 18+）
 tests\run-tests.bat            # 两条一起跑，退出码 0 / 1 / 2（2 = 缺 Node）
 ```
@@ -362,10 +362,11 @@ cat hooks/pre-commit > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 | GET | `/api/export` | 流式导出 JSON：`mode=full\|meta`、`includeDrafts` |
 | POST | `/api/import` | multipart `file`；`confirm=true` 写入，`progress=1` 走 NDJSON 进度流 |
 | GET | `/api/app/version` | 本地版本号 + 运行形态（`source` / `portable` / `installer`） |
-| GET | `/api/update/check` | 比对 GitHub 最新 Release 与本地版本；`force=1` 跳过 6 小时缓存 |
+| GET | `/api/update/check` | 比对 GitHub 最新 Release 与本地版本；`force=1` 跳过 30 分钟缓存 |
 | POST | `/api/update/download` | 后台下载安装包（仅安装版可用） |
 | GET | `/api/update/download` | 下载进度（`state`、`percent`、`received`、`total`） |
 | POST | `/api/update/install` | 复核安装包（大小 + sha256）后启动安装程序并退出 |
+| POST | `/api/update/reveal` | 打开下载目录，供自动安装失败时手动双击安装包 |
 
 > 🔄 **更新接口不会“大声失败”**：GitHub 连不上时 `/api/update/check` 仍返回 HTTP 200 与 `{"ok": false, "reason": "..."}`，界面只写一行灰字，绝不阻塞启动。只有安装版能自动安装；绿色版与源码版会被引导到 Release 页面手动下载——在那两种形态里静默跑 `setup.exe` 会**再装一份**，而不是升级当前这一份。
 

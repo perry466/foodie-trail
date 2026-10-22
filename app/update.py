@@ -558,6 +558,25 @@ def install():
     return {"ok": True, "willExit": True}
 
 
+def reveal_download():
+    """在资源管理器里打开 downloads 目录。
+
+    为什么需要：自动安装再出问题时（被杀软拦、被用户取消、或又踩到新坑），
+    用户得有个不靠命令行就能自己双击安装包的出口。第一版 v1.0.2–v1.0.7 因为
+    cmd 链转义 bug 全都装不上，就是这么卡住的。
+    不接受任何参数，路径只用服务端常量，不开"打开任意路径"的口子。
+    """
+    if os.name != "nt":
+        raise UpdateError("只有 Windows 支持打开所在文件夹", 409)
+    if not os.path.isdir(DOWNLOADS_DIR):
+        raise UpdateError("还没有下载过安装包", 409)
+    try:
+        os.startfile(DOWNLOADS_DIR)      # noqa: S606 - 固定目录，非用户输入
+    except Exception as e:
+        raise UpdateError(f"打开文件夹失败：{e}", 500)
+    return {"ok": True}
+
+
 def _delayed_exit(seconds):
     """先让 HTTP 响应发出去，再退出。
 

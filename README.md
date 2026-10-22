@@ -288,7 +288,7 @@ Drafts are included by default, and the current filters still apply — clear th
 ## 🧪 6. Tests and Data Health
 
 ```bash
-python -m pytest tests -q      # 173 backend cases
+python -m pytest tests -q      # 175 backend cases
 node tests/front-check.js      # 38 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
@@ -368,6 +368,7 @@ All endpoints are under `/api` on `127.0.0.1` only; requests from other origins 
 | POST | `/api/update/download` | start downloading the installer in the background (installer build only) |
 | GET | `/api/update/download` | download progress (`state`, `percent`, `received`, `total`) |
 | POST | `/api/update/install` | re-verify the downloaded package (size + sha256), launch the installer, then exit |
+| POST | `/api/update/reveal` | open the downloads folder so the user can run the installer manually |
 
 > 🔄 **Update endpoints never fail loudly.** If GitHub is unreachable, `/api/update/check` returns `{"ok": false, "reason": "..."}` with HTTP 200 — the UI shows one grey line and never blocks startup. Only the installer build can auto-install; portable and source builds are pointed to the release page, because silently running `setup.exe` there would install a *second* copy instead of upgrading the current one.
 

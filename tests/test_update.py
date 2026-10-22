@@ -215,6 +215,33 @@ def test_install_spawns_cmd_chain_as_plain_string(monkeypatch, tmp_path):
     assert captured["flags"] == 0x08000000      # 只用 CREATE_NO_WINDOW
 
 
+def test_reveal_download_opens_fixed_directory_only(monkeypatch, tmp_path):
+    """「打开安装包位置」只能打开服务端定的目录，且不接收任何参数。
+
+    v1.0.2–v1.0.7 因为 cmd 链 bug 全部装不上，用户一个手动出口都没有；
+    这个接口就是兜底，所以绝不能变成"打开任意路径"的口子。
+    """
+    opened = {}
+    monkeypatch.setattr(upd, "DOWNLOADS_DIR", str(tmp_path))
+    monkeypatch.setattr(upd.os, "name", "nt")
+    monkeypatch.setattr(upd.os, "startfile",
+                        lambda p: opened.setdefault("path", p), raising=False)
+    assert upd.reveal_download()["ok"] is True
+    assert opened["path"] == str(tmp_path)
+    # 目录不存在时不能瞎开
+    monkeypatch.setattr(upd, "DOWNLOADS_DIR", str(tmp_path / "nope"))
+    with pytest.raises(upd.UpdateError) as e:
+        upd.reveal_download()
+    assert e.value.status == 409
+
+
+def test_reveal_download_rejected_on_non_windows(monkeypatch):
+    monkeypatch.setattr(upd.os, "name", "posix")
+    with pytest.raises(upd.UpdateError) as e:
+        upd.reveal_download()
+    assert e.value.status == 409
+
+
 def test_download_error_messages_are_human():
     """下载失败提示里不许出现异常原文（v1.0.7 用户看到过 SSL: UNEXPECTED_EOF...）。"""
     assert upd._download_error_msg(upd.UpdateError("没有校验值")) == "没有校验值"

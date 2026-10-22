@@ -581,6 +581,15 @@ def update_install():
         return JSONResponse(status_code=e.status, content={"ok": False, "msg": e.message})
 
 
+@app.post("/api/update/reveal")
+def update_reveal():
+    """打开下载目录，给自动安装失败时留一个手动双击安装包的出口。"""
+    try:
+        return update.reveal_download()
+    except update.UpdateError as e:
+        return JSONResponse(status_code=e.status, content={"ok": False, "msg": e.message})
+
+
 
 # ---------- 高德代理（数据请求走后端，前端不持 Key） ----------
 # 高德返回 status=0 时，把 info 翻译成可操作的中文提示，避免前端只看到英文错误码

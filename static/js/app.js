@@ -1229,6 +1229,15 @@ const App = {
       if(this.dl.state==='done'){ this.doInstall(); return; }
       await this.startUpdate();
     },
+    /* 自动安装的兜底出口：打开下载目录，用户自己双击安装包。
+       v1.0.2–v1.0.7 因为 cmd 链转义 bug 全都装不上，当时没有任何手动出口。 */
+    async revealDownload(){
+      try{
+        await API.sendForm('/api/update/reveal','POST',{});
+      }catch(e){
+        toast('打开文件夹失败：'+(e.message||'未知原因'));
+      }
+    },
     async doInstall(){
       const ok=await this.askConfirm({
         title:'立即升级？',
