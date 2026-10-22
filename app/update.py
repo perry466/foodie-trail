@@ -169,28 +169,108 @@ def _rate_limit_hint(r):
     return "GitHub 拒绝了这个请求（短时间内重复检查，或代理出口被限制）"
 
 
+def _proxy_url():
+    """读 Windows 注册表里的「系统代理」地址；读不到返回 None。
+
+    为什么需要这个：Clash / V2Ray 的「系统代理」开关只改注册表，而 httpx 的
+    `trust_env` **只认环境变量、不读注册表**。不补这一条，开了系统代理的机器上
+    应用内请求其实一直在直连。
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+        )
+        try:
+            if not int(winreg.QueryValueEx(key, "ProxyEnable")[0] or 0):
+                return None
+        except (FileNotFoundError, ValueError, TypeError):
+            return None
+        server = str(winreg.QueryValueEx(key, "ProxyServer")[0] or "").strip()
+    except Exception:
+        return None
+    if not server:
+        return None
+    if "=" in server:            # "http=host:port;https=host:port" 这种写法
+        parts = {}
+        for seg in server.split(";"):
+            if "=" in seg:
+                k, v = seg.split("=", 1)
+                parts[k.strip().lower()] = v.strip()
+        server = parts.get("https") or parts.get("http") or ""
+    if not server:
+        return None
+    return server if server.startswith(("http://", "https://")) else "http://" + server
+
+
+def _client_candidates():
+    """按优先级给出几组 httpx 构造参数，逐个试，哪个能通用哪个。
+
+    为什么不是固定一个：一台机器上两个域名的可用路径可能是**相反**的。实测
+    （开 Clash 系统代理 `127.0.0.1:7890`，且无环境变量代理）：
+
+    | 域名 | 直连 | 走系统代理 |
+    |---|---|---|
+    | `api.github.com` | 200（0.6s） | **403** rate limit exceeded（出口 IP 被别人用光） |
+    | `release-assets.githubusercontent.com` | **21 秒超时** | 206（1.0s） |
+
+    写死直连，下载永远失败；写死代理，检查永远 403。所以两条都试。
+
+    需要强制直连（例如企业网络里代理会拦截）时设 `FOODMAP_UPDATE_NO_PROXY=1`。
+    """
+    if os.environ.get("FOODMAP_UPDATE_NO_PROXY") == "1":
+        return [{"trust_env": False}]
+    cands = [{"trust_env": True}]          # 环境变量代理，没有就直连
+    proxy = _proxy_url()
+    if proxy:
+        cands.append({"trust_env": False, "proxy": proxy})
+    return cands
+
+
+def _client(timeout, cand=None, follow_redirects=True):
+    kw = dict(cand or {})
+    kw["timeout"] = timeout
+    kw["follow_redirects"] = follow_redirects
+    return httpx.Client(**kw)
+
+
 def _fetch_latest():
-    """请求 GitHub latest release。调用方负责兜住所有异常。"""
+    """请求 GitHub latest release，逐个试 `_client_candidates()`。调用方兜异常。"""
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": f"FoodieTrail/{VERSION}",
     }
-    # trust_env 默认 True：跟随系统代理设置。本机实测「直连可用、走 Clash 的
-    # 7890 反而不通」，所以两条路都要留着——强制直连会让必须走代理的机器永远查不到。
-    # 需要强制直连时设 FOODMAP_UPDATE_NO_PROXY=1。
-    trust_env = os.environ.get("FOODMAP_UPDATE_NO_PROXY") != "1"
-    with httpx.Client(timeout=CHECK_TIMEOUT, follow_redirects=True, trust_env=trust_env) as c:
-        r = c.get(API_LATEST, headers=headers)
-    if r.status_code != 200:
-        if r.status_code in (403, 429):
-            hint = _rate_limit_hint(r)
-            try:
-                msg = str((r.json() or {}).get("message") or "").strip()
-            except Exception:
-                msg = ""
-            raise UpdateError(f"{hint}｜{msg}" if msg else hint, 502)
-        raise UpdateError(f"GitHub 返回 HTTP {r.status_code}", 502)
-    d = r.json()
+    last_err = None
+    for cand in _client_candidates():
+        try:
+            with _client(CHECK_TIMEOUT, cand=cand) as c:
+                r = c.get(API_LATEST, headers=headers)
+            if r.status_code != 200:
+                raise _http_error(r)
+            return _parse_release(r.json())
+        except UpdateError as e:
+            last_err = e
+        except Exception as e:                # 超时/连接失败：换下一条路
+            last_err = UpdateError(f"{type(e).__name__}: {e}", 502)
+    raise last_err or UpdateError("无法连接 GitHub", 502)
+
+
+def _http_error(r):
+    """把非 200 响应翻译成人能看懂的 UpdateError。"""
+    if r.status_code in (403, 429):
+        hint = _rate_limit_hint(r)
+        try:
+            msg = str((r.json() or {}).get("message") or "").strip()
+        except Exception:
+            msg = ""
+        return UpdateError(f"{hint}｜{msg}" if msg else hint, 502)
+    return UpdateError(f"GitHub 返回 HTTP {r.status_code}", 502)
+
+
+def _parse_release(d):
     tag = str(d.get("tag_name") or "")
     latest = tag[1:] if tag.lower().startswith("v") else tag
     if parse_version(latest) is None:
@@ -336,29 +416,45 @@ def _download_worker(asset):
             raise UpdateError("该版本没有提供 sha256 校验值，已停止自动安装，请手动下载", 400)
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
         _cleanup_old_downloads(name)
-        trust_env = os.environ.get("FOODMAP_UPDATE_NO_PROXY") != "1"
-        sha = hashlib.sha256()
-        received = 0
-        with httpx.Client(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True, trust_env=trust_env) as c:
-            with c.stream("GET", asset["url"], headers={"User-Agent": f"FoodieTrail/{VERSION}"}) as r:
-                if r.status_code != 200:
-                    raise UpdateError(f"下载失败：HTTP {r.status_code}", 502)
-                # 先用响应头纠正总量，服务端有时不给 content-length
-                clen = int(r.headers.get("content-length") or 0)
-                if clen > 0:
+        cands = _client_candidates()
+        for idx, cand in enumerate(cands):
+            sha = hashlib.sha256()
+            received = 0
+            try:
+                with _client(DOWNLOAD_TIMEOUT, cand=cand) as c:
+                    with c.stream("GET", asset["url"],
+                                  headers={"User-Agent": f"FoodieTrail/{VERSION}"}) as r:
+                        if r.status_code != 200:
+                            raise UpdateError(f"下载失败：HTTP {r.status_code}", 502)
+                        # 先用响应头纠正总量，服务端有时不给 content-length
+                        clen = int(r.headers.get("content-length") or 0)
+                        if clen > 0:
+                            with _LOCK:
+                                _DL["total"] = clen
+                        with open(part, "wb") as f:
+                            for chunk in r.iter_bytes(64 * 1024):
+                                if not chunk:
+                                    continue
+                                f.write(chunk)
+                                sha.update(chunk)
+                                received += len(chunk)
+                                if received > MAX_ASSET_BYTES:
+                                    raise UpdateError("安装包超过 200MB，已中止", 400)
+                                with _LOCK:
+                                    _DL["received"] = received
+                break        # 成功，跳出重试
+            except Exception as e:
+                # 还有下一种网络路径就重置再来一次；已经没有就抛出
+                if received:
                     with _LOCK:
-                        _DL["total"] = clen
-                with open(part, "wb") as f:
-                    for chunk in r.iter_bytes(64 * 1024):
-                        if not chunk:
-                            continue
-                        f.write(chunk)
-                        sha.update(chunk)
-                        received += len(chunk)
-                        if received > MAX_ASSET_BYTES:
-                            raise UpdateError("安装包超过 200MB，已中止", 400)
-                        with _LOCK:
-                            _DL["received"] = received
+                        _DL["received"] = 0
+                if idx == len(cands) - 1:
+                    raise
+                try:
+                    if os.path.exists(part):
+                        os.remove(part)
+                except OSError:
+                    pass
         with _LOCK:
             _DL["state"] = "verifying"
         if expect_sha and sha.hexdigest() != expect_sha:

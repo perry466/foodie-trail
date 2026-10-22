@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261022c" />
+  <link rel="stylesheet" href="/css/style.css?v=20261022d" />
 </head>
 <body>
   <!-- 地图：独立于 Vue 管控，避免重渲染破坏地图实例 -->
@@ -439,7 +439,8 @@
                 </div>
 
                 <p class="hint" style="margin-top:8px" v-if="updateInfo.canAutoInstall">
-                  安装时程序会退出，装完自动重新打开；<b>data 目录不会被删除</b>。安装包没有代码签名，Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可。
+                  安装时程序会退出，装完自动重新打开；<b>data 目录不会被删除</b>。安装包没有代码签名，Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可。<br>
+                  下载会依次尝试直连与 Windows 系统代理；两条都不通时改用「复制下载链接」。
                 </p>
                 <p class="hint" style="margin-top:8px" v-else>{{ updateModeHint }}</p>
               </div>
@@ -777,6 +778,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261022c"></script>
+  <script src="/js/app.js?v=20261022d"></script>
 </body>
 </html>

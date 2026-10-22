@@ -195,11 +195,12 @@ Safety rules built in:
 
 *More → Settings → ④ About & updates* shows the current version, how this copy was installed, and whether a newer release exists.
 
-- **Auto check on start** is on by default. It asks GitHub once per launch (cached for 6 hours) and shows a non-blocking bar under the toolbar when a new version exists. *✕* on that bar ignores the version until the next one is released.
+- **Auto check on start** is on by default. It asks GitHub once per launch (cached for 30 minutes) and shows a non-blocking bar under the toolbar when a new version exists. *✕* on that bar ignores the version until the next one is released.
 - The check sends your IP address to GitHub. Turn the switch off if that matters to you; manual *Check for updates* still works.
 - The bar never interrupts: if GitHub is unreachable you get one grey line in Settings, nothing else. Nothing is shown at startup.
+- Networking tries a **direct connection first, then the Windows system proxy** (read from the registry, not just environment variables), whichever works. Measured on one machine: `api.github.com` only worked direct while `release-assets.githubusercontent.com` only worked through the proxy — keeping just one path breaks half the feature. Set `FOODMAP_UPDATE_NO_PROXY=1` to force direct when a corporate proxy intercepts.
 
-**Installer build** — *Download and install* fetches the `setup.exe` in the background, verifies its size and SHA-256 from the release metadata, then quits the app, runs the installer silently, and reopens it. `data/` is never touched. The installer is unsigned, so Windows SmartScreen may ask once: *More info → Run anyway*.
+**Installer build** — *Download and install* fetches the `setup.exe` in the background, verifies its size and SHA-256 from the release metadata, then quits the app, runs the installer silently, and reopens it. `data/` is never touched. The installer is unsigned, so Windows SmartScreen may ask once: *More info → Run anyway*. A failed download retries over the other network path; if both fail, use *Copy download link* and fetch the file with a browser or download manager.
 
 **Portable / source build** — auto-install is disabled on purpose: running `setup.exe` there would install a **second copy** under `%LOCALAPPDATA%` instead of upgrading the one you are using. You get *Go to release page* instead; unzip over `FoodieTrail.exe` and `_internal\`, and never overwrite `data\`.
 

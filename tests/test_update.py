@@ -247,6 +247,131 @@ def test_result_exposes_download_url_for_copying():
     assert r["downloadSize"] == 20
 
 
+# ---------- 网络路径：直连与系统代理要都试 ----------
+class _FakeResp:
+    def __init__(self, status=200):
+        self.status_code = status
+        self.headers = {}
+
+    def json(self):
+        return {
+            "tag_name": "v9.9.9", "body": "", "published_at": "",
+            "html_url": "https://example.invalid/rel", "assets": [],
+        }
+
+
+class _FailingClient:
+    """第一个候选（直连）必定超时，第二个（系统代理）正常。"""
+
+    def __init__(self, **kw):
+        self.kw = kw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, *a, **k):
+        if self.kw.get("proxy"):
+            return _FakeResp(200)
+        raise RuntimeError("ConnectTimeout")
+
+
+def test_client_candidates_try_direct_then_system_proxy(monkeypatch):
+    """两个域名的可用路径可能相反（api 直连通/代理 403，assets 直连超时/代理通），
+    所以必须两条都留着，不能只留一条。"""
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+              "http_proxy", "https_proxy", "all_proxy", "FOODMAP_UPDATE_NO_PROXY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(upd, "_proxy_url", lambda: "http://127.0.0.1:7890")
+    cands = upd._client_candidates()
+    assert cands[0] == {"trust_env": True}
+    assert cands[1] == {"trust_env": False, "proxy": "http://127.0.0.1:7890"}
+
+
+def test_no_proxy_env_forces_direct_only(monkeypatch):
+    """企业网络里代理会拦截时，得留一个强制直连的出口。"""
+    monkeypatch.setenv("FOODMAP_UPDATE_NO_PROXY", "1")
+    monkeypatch.setattr(upd, "_proxy_url", lambda: "http://127.0.0.1:7890")
+    assert upd._client_candidates() == [{"trust_env": False}]
+
+
+def test_fetch_latest_falls_back_when_first_path_fails(monkeypatch):
+    """直连超时不应该让检查失败——换代理再试一次就能成。"""
+    monkeypatch.setattr(upd, "_client_candidates",
+                        lambda: [{}, {"trust_env": False, "proxy": "http://p"}])
+    monkeypatch.setattr(upd.httpx, "Client", _FailingClient)
+    r = upd._fetch_latest()
+    assert r["latest"] == "9.9.9"
+
+
+def test_download_retries_over_other_network_paths(monkeypatch):
+    """下载也要逐个试网络路径。
+
+    实测：release-assets 域名直连 21 秒超时、走系统代理 1 秒拿到数据。
+    只在检查阶段做回退、下载阶段不做，等于"提示得出新版却永远装不上"。
+    """
+    import hashlib
+
+    body = b"setup-binary"
+    expect = hashlib.sha256(body).hexdigest()
+
+    class StreamResp:
+        status_code = 200
+        headers = {"content-length": str(len(body))}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_bytes(self, n):
+            yield body
+
+    class Client:
+        def __init__(self, **kw):
+            self.kw = kw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, method, url, **kw):
+            if not self.kw.get("proxy"):
+                raise RuntimeError("ConnectTimeout")
+            return StreamResp()
+
+    monkeypatch.setattr(upd, "_client_candidates",
+                        lambda: [{}, {"trust_env": False, "proxy": "http://p"}])
+    monkeypatch.setattr(upd.httpx, "Client", Client)
+    name = "FoodieTrail-9.9.9-windows-x64-setup.exe"
+    upd._DL.update({"state": "downloading", "received": 0, "total": 0,
+                    "version": "9.9.9", "error": "", "path": ""})
+    upd._download_worker({"name": name, "url": "https://example.invalid/s.exe",
+                          "sha256": expect, "size": len(body)})
+    p = upd.progress()
+    assert p["state"] == "done", p
+    assert open(p["path"], "rb").read() == body
+    os.remove(p["path"])
+
+
+def test_fetch_latest_reports_last_error_when_all_paths_fail(monkeypatch):
+    """所有路径都失败时，抛出的应该是最后一条的原因，不是第一条的。"""
+    class AllFail(_FailingClient):
+        def get(self, *a, **k):
+            raise RuntimeError("ConnectTimeout")
+
+    monkeypatch.setattr(upd, "_client_candidates", lambda: [{}, {"proxy": "http://p"}])
+    monkeypatch.setattr(upd.httpx, "Client", AllFail)
+    with pytest.raises(upd.UpdateError) as e:
+        upd._fetch_latest()
+    assert "ConnectTimeout" in e.value.message
+
+
 # ---------- 接口 ----------
 def test_version_endpoint(client):
     r = client.get("/api/app/version")
