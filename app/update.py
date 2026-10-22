@@ -247,8 +247,8 @@ def check(force=False):
     except Exception as e:
         msg = getattr(e, "message", None) or f"{type(e).__name__}: {e}"
         # 查不到但手里有旧结果：给出旧结果并标注过期，让用户仍能看到下载入口。
-        # 没有走「网页版 releases 兜底」——实测国内网络下 github.com 网页整体不可达
-        # （api.github.com 却通），那条路只会让用户多等 6–10 秒再失败。
+        # 没有走「网页版 releases/latest 兜底」：那条路只能回答"有没有新版"，
+        # 拿不到 sha256 也就无法自动安装，实现成本换不来收益。
         if cache and parse_version(cache.get("latest")):
             out = _build_result(cache, cached=True, reason=msg)
             out["stale"] = True
