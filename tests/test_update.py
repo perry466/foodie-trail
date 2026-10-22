@@ -234,6 +234,19 @@ def test_check_does_not_attempt_web_fallback(monkeypatch):
     assert not hasattr(upd, "_fetch_latest_from_web")
 
 
+def test_cache_ttl_is_30_minutes():
+    """6 小时太长：发版后最多 6 小时都提示不出来。有人改大之前先想想这一点。"""
+    assert upd.CACHE_TTL == 30 * 60
+
+
+def test_result_exposes_download_url_for_copying():
+    """到不了 release-assets 域名的网络里，用户唯一的路是复制链接自己下。"""
+    r = upd._build_result(_release())
+    assert r["downloadUrl"] == "https://example.invalid/s.exe"
+    assert r["downloadName"] == "FoodieTrail-9.9.9-windows-x64-setup.exe"
+    assert r["downloadSize"] == 20
+
+
 # ---------- 接口 ----------
 def test_version_endpoint(client):
     r = client.get("/api/app/version")

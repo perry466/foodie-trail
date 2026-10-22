@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261022b" />
+  <link rel="stylesheet" href="/css/style.css?v=20261022c" />
 </head>
 <body>
   <!-- 地图：独立于 Vue 管控，避免重渲染破坏地图实例 -->
@@ -441,13 +441,12 @@
                 <p class="hint" style="margin-top:8px" v-if="updateInfo.canAutoInstall">
                   安装时程序会退出，装完自动重新打开；<b>data 目录不会被删除</b>。安装包没有代码签名，Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可。
                 </p>
-                <p class="hint" style="margin-top:8px" v-else>
-                  当前是{{ modeText }}（或 GitHub 接口受限），无法自动安装。请下载后手动替换 exe 与 <code>_internal</code>，<b>不要覆盖 data 目录</b>。
-                </p>
+                <p class="hint" style="margin-top:8px" v-else>{{ updateModeHint }}</p>
               </div>
 
               <div class="upd-acts" style="margin-top:10px">
                 <button class="btn-ghost" :disabled="updateBusy" @click="checkUpdate(true)">{{ updateBusy ? '检查中…' : '检查更新' }}</button>
+                <button class="btn-ghost" v-if="updateInfo.downloadUrl" @click="copyUpdateUrl">复制下载链接</button>
                 <button class="btn-ghost" @click="openReleasePage">前往 Release 页面</button>
               </div>
               <div class="form-msg" style="margin-top:8px">{{ updateMsg }}</div>
@@ -778,6 +777,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261022b"></script>
+  <script src="/js/app.js?v=20261022c"></script>
 </body>
 </html>

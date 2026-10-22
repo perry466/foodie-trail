@@ -5,14 +5,14 @@
 
 ## 一、跑测试
 
-### 1. 后端（pytest，164 个用例）
+### 1. 后端（pytest，166 个用例）
 
 ```bat
 venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 venv\Scripts\python.exe -m pytest tests -q
 ```
 
-预期输出：`164 passed`。
+预期输出：`166 passed`。
 
 ### 2. 前端（Node 断言，38 项）
 

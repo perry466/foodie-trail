@@ -483,6 +483,13 @@ const App = {
     },
     /* 运行形态：设置面板里显示「安装版 / 绿色版 / 源码版」 */
     modeText(){ return this.appMode==='installer' ? '安装版' : (this.appMode==='portable' ? '绿色版' : '源码版'); },
+    /* 不能自动安装时，按形态给对应的操作——源码版没 exe 可替换，让它去"替换 _internal"是错的 */
+    updateModeHint(){
+      if(this.updateInfo && this.updateInfo.canAutoInstall) return '';
+      if(this.appMode==='source') return '源码版：在项目目录 git pull 后重启服务即可，无需下载安装包。';
+      if(this.appMode==='portable') return '绿色版：下载后替换 FoodieTrail.exe 与 _internal，不要覆盖 data 目录。';
+      return '安装版：当前拿不到安装包信息（GitHub 接口受限），可点「复制下载链接」用浏览器下载后覆盖安装。';
+    },
     /* 当前生效的筛选条件数（不含关键词与排序） */
     activeFilterCount(){
       const f=this.filters;
@@ -1150,6 +1157,26 @@ const App = {
       const url=(this.updateInfo&&this.updateInfo.htmlUrl)||'https://github.com/perry466/foodie-trail/releases';
       window.open(url,'_blank','noopener');
     },
+    /* 应用内下载走的是 release-assets.githubusercontent.com，有些网络到不了那里，
+       httpx 会连接超时。给一条「复制链接」的出路：丢进浏览器或下载工具往往能成。 */
+    async copyUpdateUrl(){
+      const url=(this.updateInfo&&this.updateInfo.downloadUrl)||'';
+      if(!url){ toast('没有可用的安装包链接，请先检查更新'); return; }
+      try{
+        await navigator.clipboard.writeText(url);
+        toast('下载链接已复制，可用浏览器或下载工具获取');
+        return;
+      }catch(e){ /* 老浏览器 / 无剪贴板权限：走下面的兜底 */ }
+      try{
+        const ta=document.createElement('textarea');
+        ta.value=url; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove();
+        toast('下载链接已复制');
+      }catch(e){
+        this.showError('复制失败', '请手动复制这个地址：\n'+url);
+      }
+    },
     async startUpdate(){
       if(this.dl.state==='downloading') return;
       this.updateBusy=true; this.updateMsg='正在下载安装包…';
@@ -1158,7 +1185,7 @@ const App = {
         this._pollDownload();
       }catch(e){
         this.updateBusy=false;
-        this.updateMsg='下载失败：'+e.message;
+        this.updateMsg='下载失败：'+e.message+'。可点「复制下载链接」用浏览器或下载工具获取';
       }
     },
     _pollDownload(){
@@ -1172,7 +1199,8 @@ const App = {
             this.updateBusy=false; this.updateMsg='下载完成，可以安装了';
           }else if(d.state==='error'){
             clearInterval(this._dlTimer); this._dlTimer=null;
-            this.updateBusy=false; this.updateMsg='下载失败：'+(d.error||'未知错误');
+            this.updateBusy=false;
+            this.updateMsg='下载失败：'+(d.error||'未知错误')+'。可点「复制下载链接」用浏览器或下载工具获取';
           }
         }catch(e){ /* 轮询失败不打断，下一轮继续 */ }
       },800);

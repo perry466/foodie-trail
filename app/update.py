@@ -33,9 +33,11 @@ REPO = "perry466/foodie-trail"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 HTML_RELEASES = f"https://github.com/{REPO}/releases"
 
-# 检查结果缓存 6 小时：避免每次打开都往 GitHub 打一次请求（大陆网络不稳，
-# 而且免认证接口有 60 次/小时/IP 的限额）。
-CACHE_TTL = 6 * 3600
+# 检查结果缓存 30 分钟。
+# 定这个值权衡的是两件事：发新版之后用户多久能看到（太长会错过），以及
+# 免认证接口 60 次/小时/IP 的限额（一天开 10 次应用也只有 10 次请求，远低于限额）。
+# 曾经用 6 小时，结果刚发布的版本最多 6 小时都提示不出来。
+CACHE_TTL = 30 * 60
 # 检查用短超时：宁可这次不提示，也不能让启动变慢。
 CHECK_TIMEOUT = 4.0
 # 下载用长读超时：单个 chunk 之间允许停顿，整体不设上限（大小另有硬上限）。
@@ -228,6 +230,13 @@ def _build_result(cache, cached=False, reason=""):
             setup and setup.get("url") and setup.get("sha256")),
         "hasSetup": bool(setup and setup.get("url")),
         "hasZip": bool(cache.get("zip") and cache["zip"].get("url")),
+        # 直接给出安装包地址供前端「复制下载链接」用：
+        # 到不了 release-assets 域名的网络下，应用内下载必然超时，
+        # 用户拿链接丢进浏览器/下载工具反而能成。这个 URL 只用于展示与复制，
+        # 安装接口仍然只认缓存里自己那份资产，不接受前端传地址。
+        "downloadUrl": (setup or {}).get("url") or "",
+        "downloadName": (setup or {}).get("name") or "",
+        "downloadSize": int((setup or {}).get("size") or 0),
     }
     if cache.get("via"):
         result["via"] = cache["via"]
