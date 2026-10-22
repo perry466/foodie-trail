@@ -1104,6 +1104,7 @@ const App = {
         toast('地图 Key 读取失败：'+e.message);
       }
       this.loadVersion();
+      this._syncDownload();
     },
     /* ---------- 版本与更新 ---------- */
     async loadVersion(){
@@ -1198,7 +1199,7 @@ const App = {
       }
     },
     async startUpdate(){
-      if(this.dl.state==='downloading') return;
+      if(this.dl.state==='downloading'||this.dl.state==='cancelling') return;
       this.updateBusy=true; this.updateMsg='正在下载安装包…';
       try{
         this.dl=await API.sendForm('/api/update/download','POST',{});
@@ -1206,6 +1207,19 @@ const App = {
       }catch(e){
         this.updateBusy=false;
         this.updateMsg='下载失败：'+e.message+'。可点「复制下载链接」用浏览器或下载工具获取';
+      }
+    },
+    /* 取消下载：后端是协作式的（点下即把 state 切成 cancelling，
+       worker 收到标志位后自己删 .part），所以这里不立刻假定成功，
+       继续轮询直到看到 cancelled —— 否则按钮会先显示「已取消」再跳回「下载中」。 */
+    async cancelUpdate(){
+      if(this.dl.state!=='downloading') return;
+      this.updateMsg='正在取消下载…';
+      try{
+        this.dl=await API.sendForm('/api/update/cancel','POST',{});
+        this._pollDownload();
+      }catch(e){
+        toast('取消失败：'+(e.message||'未知原因'));
       }
     },
     _pollDownload(){
@@ -1217,6 +1231,11 @@ const App = {
           if(d.state==='done'){
             clearInterval(this._dlTimer); this._dlTimer=null;
             this.updateBusy=false; this.updateMsg='下载完成，可以安装了';
+          }else if(d.state==='cancelled'){
+            clearInterval(this._dlTimer); this._dlTimer=null;
+            this.updateBusy=false; this.updateMsg='已取消下载，没有留下半截安装包';
+          }else if(d.state==='cancelling'){
+            this.updateMsg='正在取消下载…';
           }else if(d.state==='error'){
             clearInterval(this._dlTimer); this._dlTimer=null;
             this.updateBusy=false;
@@ -1224,6 +1243,17 @@ const App = {
           }
         }catch(e){ /* 轮询失败不打断，下一轮继续 */ }
       },800);
+    },
+    /* 打开设置时同步一次下载进度：设置面板关掉再打开、或者刷新过页面之后，
+       前端内存里的 dl 可能还停在 idle，那样就没有「取消下载」按钮可点。 */
+    async _syncDownload(){
+      try{
+        const d=await API.get('/api/update/download');
+        if(!d||!d.state) return;
+        this.dl=d;
+        if(d.state==='downloading'){ this.updateBusy=true; this._pollDownload(); }
+        else if(d.state==='cancelling'||d.state==='verifying'){ this._pollDownload(); }
+      }catch(e){ /* 同步失败不影响其它功能，静默 */ }
     },
     async installOrDownload(){
       if(this.dl.state==='done'){ this.doInstall(); return; }

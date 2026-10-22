@@ -572,6 +572,16 @@ def update_download_progress():
     return update.progress()
 
 
+@app.post("/api/update/cancel")
+def update_cancel():
+    """取消正在进行的下载。幂等：没在下载也返回 200 + 当前进度。
+
+    为什么需要一个独立路由而不是 DELETE：前端用的是同一个 sendForm 助手，
+    而且这个操作不是「删除服务端资源」，只是停一个后台任务。
+    """
+    return update.cancel_download()
+
+
 @app.post("/api/update/install")
 def update_install():
     """启动安装器并退出本进程。只对安装版开放。"""

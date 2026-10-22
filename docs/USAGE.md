@@ -202,6 +202,8 @@ Safety rules built in:
 
 **Installer build** — *Download and install* fetches the `setup.exe` in the background, verifies its size and SHA-256 from the release metadata, then quits the app, runs the installer silently, and reopens it. `data/` is never touched. The installer is unsigned, so Windows SmartScreen may ask once: *More info → Run anyway*. A failed download retries over the other network path; if both fail, use *Copy download link* and fetch the file with a browser or download manager.
 
+A **Cancel download** button appears next to the main one while a download is running: the state flips to "cancelling" immediately, the connection is dropped, the partial `.part` file is deleted, and it ends as "cancelled" — never as a failure, and no half installer is left behind. You can restart the download at any time afterwards (no resume; it starts over). Installing is blocked while a download is in flight, so you can never install a partial package or silently reinstall a stale same-named exe.
+
 **Portable / source build** — auto-install is disabled on purpose: running `setup.exe` there would install a **second copy** under `%LOCALAPPDATA%` instead of upgrading the one you are using. You get *Go to release page* instead; unzip over `FoodieTrail.exe` and `_internal\`, and never overwrite `data\`.
 
 ---

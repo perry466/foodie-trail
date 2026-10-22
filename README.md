@@ -288,7 +288,7 @@ Drafts are included by default, and the current filters still apply — clear th
 ## 🧪 6. Tests and Data Health
 
 ```bash
-python -m pytest tests -q      # 175 backend cases
+python -m pytest tests -q      # 183 backend cases
 node tests/front-check.js      # 38 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
@@ -364,9 +364,10 @@ All endpoints are under `/api` on `127.0.0.1` only; requests from other origins 
 | GET | `/api/export` | streaming JSON backup: `mode=full\|meta`, `includeDrafts` |
 | POST | `/api/import` | multipart `file`; `confirm=true` writes, `progress=1` streams NDJSON |
 | GET | `/api/app/version` | local version + run mode (`source` / `portable` / `installer`) |
-| GET | `/api/update/check` | latest GitHub release vs local version; `force=1` bypasses the 6 h cache |
+| GET | `/api/update/check` | latest GitHub release vs local version; `force=1` bypasses the 30 min cache |
 | POST | `/api/update/download` | start downloading the installer in the background (installer build only) |
 | GET | `/api/update/download` | download progress (`state`, `percent`, `received`, `total`) |
+| POST | `/api/update/cancel` | cancel an in-flight download; idempotent, returns the same progress shape (`state` → `cancelling` → `cancelled`, `.part` removed) |
 | POST | `/api/update/install` | re-verify the downloaded package (size + sha256), launch the installer, then exit |
 | POST | `/api/update/reveal` | open the downloads folder so the user can run the installer manually |
 

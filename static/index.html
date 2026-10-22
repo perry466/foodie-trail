@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261022h" />
+  <link rel="stylesheet" href="/css/style.css?v=20261022i" />
 </head>
 <body>
   <!-- 地图：独立于 Vue 管控，避免重渲染破坏地图实例 -->
@@ -423,26 +423,30 @@
                 </div>
                 <p class="upd-notes" v-if="updateNotes">{{ updateNotes }}</p>
 
-                <div class="upd-bar" v-if="dl.state==='downloading'||dl.state==='verifying'">
+                <div class="upd-bar" v-if="dl.state==='downloading'||dl.state==='cancelling'||dl.state==='verifying'">
                   <div class="upd-bar-fill" :style="{width: (dl.state==='verifying'?100:dl.percent)+'%'}"></div>
                 </div>
 
                 <div class="upd-acts" v-if="updateInfo.canAutoInstall">
                   <button class="btn-primary"
-                          :disabled="updateBusy || dl.state==='downloading'"
+                          :disabled="updateBusy || dl.state==='downloading' || dl.state==='cancelling' || dl.state==='verifying'"
                           @click="installOrDownload">
                     <template v-if="dl.state==='downloading'">下载中 {{ dl.percent }}%</template>
+                    <template v-else-if="dl.state==='cancelling'">取消中…</template>
                     <template v-else-if="dl.state==='verifying'">校验中…</template>
                     <template v-else-if="dl.state==='done'">立即安装并重启</template>
                     <template v-else>下载并安装</template>
                   </button>
+                  <button class="btn-ghost" v-if="dl.state==='downloading'||dl.state==='cancelling'"
+                          :disabled="dl.state==='cancelling'"
+                          @click="cancelUpdate">{{ dl.state==='cancelling' ? '取消中…' : '取消下载' }}</button>
                   <button class="btn-ghost" v-if="dl.state==='done'"
                           @click="revealDownload">打开安装包位置</button>
                 </div>
 
                 <p class="hint" style="margin-top:8px" v-if="updateInfo.canAutoInstall">
                   安装时程序会退出，装完自动重新打开；<b>data 目录不会被删除</b>。安装包没有代码签名，Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可。<br>
-                  下载会依次尝试直连与 Windows 系统代理；两条都不通时改用「复制下载链接」。
+                  下载会依次尝试直连与 Windows 系统代理；两条都不通时改用「复制下载链接」。下载途中可随时点「取消下载」，不会留下半截安装包。
                   万一自动安装没反应，点「打开安装包位置」直接双击那个 exe 也能装。
                 </p>
                 <p class="hint" style="margin-top:8px" v-else>{{ updateModeHint }}</p>
@@ -781,6 +785,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261022h"></script>
+  <script src="/js/app.js?v=20261022i"></script>
 </body>
 </html>

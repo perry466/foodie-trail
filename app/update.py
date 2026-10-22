@@ -45,15 +45,30 @@ DOWNLOAD_TIMEOUT = httpx.Timeout(15.0, read=60.0)
 MAX_ASSET_BYTES = 200 * 1024 * 1024
 
 _LOCK = threading.Lock()
+# 取消标志：只能由 cancel_download() 置位，worker 每收到一块就检查一次。
+# 不用「杀掉线程」——Python 里没法安全地杀线程；用协作式标志位是唯一不丢
+# 句柄、不泄漏 socket、不留下半个 .part 的做法。
+_CANCEL = threading.Event()
 # 下载进度：前端轮询 /api/update/download 读它
+# state 流转：idle → downloading → (cancelling → cancelled) / verifying → done / error
 _DL = {
-    "state": "idle",        # idle | downloading | verifying | done | error
+    "state": "idle",
     "received": 0,
     "total": 0,
     "version": "",
     "error": "",
     "path": "",
 }
+# 正在下载 = 不允许再起一个新任务（含取消中但 worker 还没退出的窗口期）
+ACTIVE_STATES = ("downloading", "cancelling", "verifying")
+# 当前正在读的响应对象。取消时从另一个线程 close 它，让卡在 socket 读上的
+# iter_bytes 立刻报错返回；否则「网络已经断了」的情况下，用户点取消要等满
+# 一个读超时（60 秒）才有反应——那看起来就像取消按钮没生效。
+_ACTIVE_STREAM = None
+
+
+class _Cancelled(Exception):
+    """内部信号：用户主动取消，不是错误，不该显示成失败。"""
 
 _VERSION_RE = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 
@@ -389,16 +404,52 @@ def start_download():
     if not url:
         raise UpdateError("还没有拿到安装包信息，请先检查更新", 409)
     with _LOCK:
-        if _DL["state"] in ("downloading", "verifying"):
-            return progress()
-        _DL.update({
-            "state": "downloading", "received": 0,
-            "total": int(setup.get("size") or 0),
-            "version": (cache or {}).get("latest") or "",
-            "error": "", "path": "",
-        })
+        already = _DL["state"] in ACTIVE_STATES
+        if not already:
+            _CANCEL.clear()
+            _DL.update({
+                "state": "downloading", "received": 0,
+                "total": int(setup.get("size") or 0),
+                "version": (cache or {}).get("latest") or "",
+                "error": "", "path": "",
+            })
+    # 注意：progress() 自己也要拿 _LOCK，所以不能在 with 块里 return progress()，
+    # 那会直接死锁（重复点下载 = 请求永久挂住）。必须先出锁再读。
+    if already:
+        return progress()
     threading.Thread(target=_download_worker, args=(setup,), daemon=True).start()
     return progress()
+
+
+def cancel_download():
+    """取消正在进行的下载。幂等：没在下载就原样返回当前进度。
+
+    实现是协作式的（置标志位让 worker 自己收摊），不是抢着删文件：
+    worker 可能正在写 .part、可能正卡在 socket 读上，从外部删文件会撞车。
+    这里只把 state 立刻切成 cancelling，让按钮秒回「取消中…」；
+    真正的清理（删 .part、把 state 落到 cancelled）由 worker 负责。
+    另外补一刀：把正在读的响应 close 掉，让阻塞中的 recv 立即返回。
+    """
+    global _ACTIVE_STREAM
+    target = None
+    with _LOCK:
+        if _DL["state"] == "downloading":
+            _DL["state"] = "cancelling"
+            _DL["error"] = ""
+            _CANCEL.set()
+            target = _ACTIVE_STREAM
+    if target is not None:
+        # 单独一个线程去 close：万一 close 内部也要等 worker 放锁，卡住的是这个
+        # 一次性线程，而不是取消请求本身。worker 侧仍有读超时兜底。
+        threading.Thread(target=_close_quietly, args=(target,), daemon=True).start()
+    return progress()
+
+
+def _close_quietly(obj):
+    try:
+        obj.close()
+    except Exception:
+        pass
 
 
 def _cleanup_old_downloads(keep_name):
@@ -417,10 +468,13 @@ def _cleanup_old_downloads(keep_name):
 
 
 def _download_worker(asset):
+    global _ACTIVE_STREAM
     name = asset["name"]
     final, part = _download_paths(name)
     expect_sha = asset.get("sha256") or ""
     try:
+        if _CANCEL.is_set():
+            raise _Cancelled()
         if not expect_sha:
             raise UpdateError("该版本没有提供 sha256 校验值，已停止自动安装，请手动下载", 400)
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -433,6 +487,8 @@ def _download_worker(asset):
                 with _client(DOWNLOAD_TIMEOUT, cand=cand) as c:
                     with c.stream("GET", asset["url"],
                                   headers={"User-Agent": f"FoodieTrail/{VERSION}"}) as r:
+                        # 登记句柄，取消时由 cancel_download() 从别的线程 close 它
+                        _ACTIVE_STREAM = r
                         if r.status_code != 200:
                             raise UpdateError(f"下载失败：HTTP {r.status_code}", 502)
                         # 先用响应头纠正总量，服务端有时不给 content-length
@@ -442,6 +498,10 @@ def _download_worker(asset):
                                 _DL["total"] = clen
                         with open(part, "wb") as f:
                             for chunk in r.iter_bytes(64 * 1024):
+                                # 每块都查一次取消标志：64KB 一块，用户点下取消到真正
+                                # 停下来通常是毫秒级；网络卡住时最多等一个读超时。
+                                if _CANCEL.is_set():
+                                    raise _Cancelled()
                                 if not chunk:
                                     continue
                                 f.write(chunk)
@@ -453,6 +513,9 @@ def _download_worker(asset):
                                     _DL["received"] = received
                 break        # 成功，跳出重试
             except Exception as e:
+                # 取消不重试：换个网络路径继续下是用户明确不要的行为
+                if isinstance(e, _Cancelled) or _CANCEL.is_set():
+                    raise _Cancelled() from None
                 # 还有下一种网络路径就重置再来一次；已经没有就抛出
                 if received:
                     with _LOCK:
@@ -464,21 +527,36 @@ def _download_worker(asset):
                         os.remove(part)
                 except OSError:
                     pass
+        if _CANCEL.is_set():
+            raise _Cancelled()
         with _LOCK:
             _DL["state"] = "verifying"
         if expect_sha and sha.hexdigest() != expect_sha:
             raise UpdateError("安装包校验失败（sha256 不匹配），已删除", 400)
+        # 校验通过后、改名之前再看一眼：这一刻取消，.part 会在 except 里被删掉，
+        # 不会留下一个「已下载但用户并不想要」的完整 exe。
+        if _CANCEL.is_set():
+            raise _Cancelled()
         os.replace(part, final)          # 只有校验通过才让它变成正式文件名
         with _LOCK:
             _DL.update({"state": "done", "path": final, "received": received})
     except Exception as e:
+        # 取消和失败必须分开：取消是用户的正常操作，不能报成「下载失败」
+        cancelled = isinstance(e, _Cancelled) or _CANCEL.is_set()
         try:
             if os.path.exists(part):
                 os.remove(part)
         except Exception:
             pass
         with _LOCK:
-            _DL.update({"state": "error", "error": _download_error_msg(e)})
+            if cancelled:
+                _DL.update({"state": "cancelled", "error": "",
+                            "received": 0, "path": ""})
+            else:
+                _DL.update({"state": "error", "error": _download_error_msg(e)})
+    finally:
+        # 句柄一定要摘掉：留着它，下一次取消会去 close 一个已经关过的旧响应
+        _ACTIVE_STREAM = None
 
 
 def _download_error_msg(e):
@@ -517,6 +595,11 @@ def install():
     """启动安装器并退出本进程。返回后调用方应立即响应前端。"""
     if detect_mode() != "installer":
         raise UpdateError("当前不是安装版，无法自动安装", 409)
+    # 下载中/取消中不允许安装：.part 还没变成正式文件，装起来必然失败，
+    # 更糟的是如果磁盘上有上一版的同名 exe，会「静默装回旧包」。
+    with _LOCK:
+        if _DL["state"] in ("downloading", "cancelling"):
+            raise UpdateError("安装包还在下载中，请等下载完成或先取消下载", 409)
     cache = _read_cache() or {}
     setup = cache.get("setup") or {}
     if not setup.get("name"):

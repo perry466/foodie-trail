@@ -446,6 +446,154 @@ def test_download_retries_over_other_network_paths(monkeypatch):
     os.remove(p["path"])
 
 
+# ---------- 取消下载 ----------
+# 用户反馈：点了「下载并安装」之后没有任何办法停下来（25MB 走代理有时要几分钟）。
+# 取消必须满足三条：① 立刻有反馈（state 秒变 cancelling）；② 不留半个安装包；
+# ③ 不能算失败——取消是正常操作，界面不该弹「下载失败」。
+@pytest.fixture(autouse=True)
+def _reset_download_state():
+    with upd._LOCK:
+        upd._CANCEL.clear()
+        upd._DL.update({"state": "idle", "received": 0, "total": 0,
+                        "version": "", "error": "", "path": ""})
+    yield
+    with upd._LOCK:
+        upd._CANCEL.clear()
+        upd._DL.update({"state": "idle", "received": 0, "total": 0,
+                        "version": "", "error": "", "path": ""})
+
+
+class _ChunkStream:
+    """按块吐数据；吐到第 `cancel_after` 块之前触发一次 cancel_download()。
+
+    把取消放在生成器里，是为了模拟「worker 正在写 .part 的同时，另一个请求线程
+    调用了 /api/update/cancel」这个真实时序。
+    """
+
+    def __init__(self, chunks, cancel_after=None):
+        self.chunks = chunks
+        self.cancel_after = cancel_after
+
+    status_code = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    @property
+    def headers(self):
+        return {"content-length": str(sum(len(c) for c in self.chunks))}
+
+    def iter_bytes(self, n):
+        for i, c in enumerate(self.chunks):
+            if self.cancel_after is not None and i == self.cancel_after:
+                upd.cancel_download()
+            yield c
+
+
+def _patch_stream(monkeypatch, chunks, cancel_after=None, calls=None):
+    calls = calls if calls is not None else []
+
+    class Client:
+        def __init__(self, **kw):
+            self.kw = kw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, method, url, **kw):
+            calls.append(url)
+            return _ChunkStream(chunks, cancel_after)
+
+    monkeypatch.setattr(upd, "_client_candidates", lambda: [{}, {"proxy": "http://p"}])
+    monkeypatch.setattr(upd.httpx, "Client", Client)
+    return calls
+
+
+def test_cancel_midway_marks_cancelled_and_removes_part(monkeypatch):
+    chunks = [b"a" * 64, b"b" * 64, b"c" * 64]
+    _patch_stream(monkeypatch, chunks, cancel_after=1)
+    with upd._LOCK:
+        upd._DL["state"] = "downloading"
+    upd._download_worker({"name": "FoodieTrail-9.9.9-windows-x64-setup.exe",
+                          "url": "https://example.invalid/s.exe",
+                          "sha256": "0" * 64, "size": 192})
+    p = upd.progress()
+    assert p["state"] == "cancelled", p          # 不是 error，也不该是 done
+    assert p["error"] == ""
+    assert p["received"] == 0
+    assert not os.path.exists(os.path.join(
+        upd.DOWNLOADS_DIR, "FoodieTrail-9.9.9-windows-x64-setup.exe.part"))
+    assert not os.path.exists(os.path.join(
+        upd.DOWNLOADS_DIR, "FoodieTrail-9.9.9-windows-x64-setup.exe"))
+
+
+def test_cancel_does_not_try_other_network_paths(monkeypatch):
+    """取消就是取消：不能因为「还有一条网络路径没试」就接着下。"""
+    calls = _patch_stream(monkeypatch, [b"x" * 64] * 3, cancel_after=0, calls=[])
+    with upd._LOCK:
+        upd._DL["state"] = "downloading"
+    upd._download_worker({"name": "FoodieTrail-9.9.9-windows-x64-setup.exe",
+                          "url": "https://example.invalid/s.exe",
+                          "sha256": "0" * 64, "size": 192})
+    assert len(calls) == 1, calls                # 第二条路径一次都没碰
+    assert upd.progress()["state"] == "cancelled"
+
+
+def test_cancel_flips_state_to_cancelling_immediately():
+    with upd._LOCK:
+        upd._DL.update({"state": "downloading", "received": 10, "total": 100})
+    p = upd.cancel_download()
+    assert p["state"] == "cancelling"            # 按钮立刻有反馈
+    assert upd._CANCEL.is_set()
+
+
+def test_cancel_is_idempotent_when_idle():
+    assert upd.progress()["state"] == "idle"
+    assert upd.cancel_download()["state"] == "idle"
+    assert upd.cancel_download()["state"] == "idle"
+    assert not upd._CANCEL.is_set()
+
+
+def test_cancel_after_done_is_noop(monkeypatch):
+    """已经下完了再点取消：不能把状态从 done 改掉，安装入口还得在。"""
+    with upd._LOCK:
+        upd._DL.update({"state": "done", "path": "x.exe", "received": 100})
+    assert upd.cancel_download()["state"] == "done"
+
+
+def test_start_download_clears_previous_cancel_flag(monkeypatch):
+    """取消之后要能重新下载：上一轮的取消标志不能把新任务立刻掐掉。"""
+    started = []
+    monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
+    monkeypatch.setattr(upd, "_read_cache", lambda: {"latest": "9.9.9", "setup": {
+        "name": "FoodieTrail-9.9.9-windows-x64-setup.exe",
+        "url": "https://example.invalid/s.exe", "sha256": "0" * 64, "size": 192}})
+    monkeypatch.setattr(upd.threading, "Thread",
+                        lambda *a, **kw: type("T", (), {"start": lambda s: started.append(1)})())
+    upd._CANCEL.set()
+    p = upd.start_download()
+    assert p["state"] == "downloading"
+    assert not upd._CANCEL.is_set()
+    assert started
+
+
+def test_install_refuses_while_downloading(monkeypatch):
+    """下载中允许安装会装到半个包，甚至静默装回旧版同名 exe。"""
+    monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
+    with upd._LOCK:
+        upd._DL.update({"state": "downloading"})
+    with pytest.raises(upd.UpdateError) as e:
+        upd.install()
+    assert e.value.status == 409
+    assert "下载" in e.value.message
+
+
 def test_fetch_latest_reports_last_error_when_all_paths_fail(monkeypatch):
     """所有路径都失败时，抛出的应该是最后一条的原因，不是第一条的。"""
     class AllFail(_FailingClient):
@@ -489,6 +637,15 @@ def test_download_progress_shape(client):
     assert r.status_code == 200
     body = r.json()
     assert set(("state", "percent", "received", "total")).issubset(body)
+
+
+def test_cancel_endpoint_returns_progress_shape(client):
+    """取消接口必须 200 + 进度结构：前端直接把它当 dl 用，缺字段模板就渲染不出来。"""
+    r = client.post("/api/update/cancel")
+    assert r.status_code == 200
+    body = r.json()
+    assert set(("state", "percent", "received", "total")).issubset(body)
+    assert body["state"] in ("idle", "cancelling", "cancelled")
 
 
 def test_update_cache_is_valid_json(tmp_path):
