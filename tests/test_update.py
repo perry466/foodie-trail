@@ -5,6 +5,7 @@
 """
 import json
 import os
+import time
 
 import pytest
 
@@ -21,7 +22,7 @@ ASSETS = [
 
 def _release(latest="9.9.9", checked_at=None):
     return {
-        "checkedAt": int(checked_at if checked_at is not None else __import__("time").time()),
+        "checkedAt": int(checked_at if checked_at is not None else time.time()),
         "latest": latest,
         "tag": "v" + latest,
         "notes": "修了几个问题",
