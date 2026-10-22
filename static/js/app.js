@@ -1111,7 +1111,7 @@ const App = {
       catch(e){ /* 版本号读不到不影响主流程，静默 */ }
     },
     fmtDate(s){ try{ return new Date(s).toLocaleDateString('zh-CN'); }catch(e){ return ''; } },
-    /* force=true 跳过后端 6 小时缓存；启动时用 false，几乎不产生网络开销 */
+    /* force=true 跳过后端 30 分钟缓存；启动时用 false，几乎不产生网络开销 */
     async checkUpdate(force){
       if(this.updateBusy) return;
       // 手动检查加 20 秒防抖：GitHub 对短时间内的突发请求会直接回 403（次级限流），
@@ -1129,12 +1129,13 @@ const App = {
           // 后端的 reason 已经是给人看的完整句子（原因+等多久+去哪看），直接展示
           this.updateMsg=(r&&r.reason)||'暂时无法检查更新，请稍后再试';
         }else if(r.hasUpdate){
-          this.updateMsg = r.degraded
+          let m = r.degraded
             ? ('发现新版本 v'+r.latest+'，但 GitHub 接口受限，只能手动下载')
             : ('发现新版本 v'+r.latest);
+          this.updateMsg=m+this._cacheNote(r);
           this._showUpdateBanner();
         }else{
-          this.updateMsg='已是最新版本（v'+r.current+'）';
+          this.updateMsg='已是最新版本（v'+r.current+'）'+this._cacheNote(r);
           this.updateBanner=false;
         }
       }catch(e){
@@ -1145,6 +1146,17 @@ const App = {
       }
     },
     openUpdateFromBanner(){ this.updateBanner=false; this.openSettings(); },
+    /* 结果来自缓存或联网失败兜底时必须说明，否则刚发布的新版会被旧缓存挡住，
+       用户看着「发现新版本 v1.0.7」会以为就是最新的（2026-10-22 用户真踩过）。 */
+    _cacheNote(r){
+      if(!r) return '';
+      if(r.stale) return '（注意：刚才联网失败，这是上一次检查的结果，点「检查更新」重试）';
+      if(r.cached && r.checkedAt){
+        const mins=Math.max(1,Math.round((Date.now()/1000-r.checkedAt)/60));
+        return '（缓存：'+mins+' 分钟前检查的结果，点「检查更新」立即刷新）';
+      }
+      return '';
+    },
     /* 未配置高德 Key 时底部红条也占 top:74px（.map-banner），两条会叠在一起。
        红条在 #map 层、更新条在 #ui 层，后者必然盖住前者，所以这里错开一行。 */
     _showUpdateBanner(){
