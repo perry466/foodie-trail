@@ -41,6 +41,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt -r requirements-build.txt
 
+      # 硬闸门：tag 必须与 app/version.py 的 VERSION 一致。
+      # 不一致时发出去的包会「自己认为自己是旧版」，客户端每次打开都提示更新，
+      # 而且只有发布之后才会暴露——比构建失败难查得多。
+      - name: Verify tag matches app/version.py
+        shell: bash
+        run: |
+          TAG_VER="${{ steps.ver.outputs.v }}"
+          CODE_VER=$(python -c "from app.version import VERSION; print(VERSION)")
+          echo "tag=$TAG_VER code=$CODE_VER"
+          if [ "$TAG_VER" != "$CODE_VER" ]; then
+            echo "::error::tag v$TAG_VER 与 app/version.py 的 $CODE_VER 不一致，拒绝发布"
+            exit 1
+          fi
+
       - name: Run tests (backend)
         run: python -m pytest tests -q
 

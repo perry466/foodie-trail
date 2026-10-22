@@ -288,7 +288,7 @@ Drafts are included by default, and the current filters still apply — clear th
 ## 🧪 6. Tests and Data Health
 
 ```bash
-python -m pytest tests -q      # 141 backend cases
+python -m pytest tests -q      # 161 backend cases
 node tests/front-check.js      # 38 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
@@ -363,6 +363,13 @@ All endpoints are under `/api` on `127.0.0.1` only; requests from other origins 
 | GET | `/api/dashboard` | aggregated statistics (excludes drafts) |
 | GET | `/api/export` | streaming JSON backup: `mode=full\|meta`, `includeDrafts` |
 | POST | `/api/import` | multipart `file`; `confirm=true` writes, `progress=1` streams NDJSON |
+| GET | `/api/app/version` | local version + run mode (`source` / `portable` / `installer`) |
+| GET | `/api/update/check` | latest GitHub release vs local version; `force=1` bypasses the 6 h cache |
+| POST | `/api/update/download` | start downloading the installer in the background (installer build only) |
+| GET | `/api/update/download` | download progress (`state`, `percent`, `received`, `total`) |
+| POST | `/api/update/install` | re-verify the downloaded package (size + sha256), launch the installer, then exit |
+
+> 🔄 **Update endpoints never fail loudly.** If GitHub is unreachable, `/api/update/check` returns `{"ok": false, "reason": "..."}` with HTTP 200 — the UI shows one grey line and never blocks startup. Only the installer build can auto-install; portable and source builds are pointed to the release page, because silently running `setup.exe` there would install a *second* copy instead of upgrading the current one.
 
 > ⚠️ **`PUT` is a full replace.** Fields you omit are reset (`tags → []`, `note → null`, `avgPrice → null`, `checkinStatus → null`, `draft → false`). The UI always sends the complete body; scripts must `GET` first, modify, then `PUT` the whole object.
 

@@ -191,6 +191,18 @@ Safety rules built in:
 - *Clear security code* removes only `securityJsCode`; *Clear all* removes every key. Both ask for confirmation.
 - Saving a key reloads the page, because the map SDK can only be initialised once per page load.
 
+### 10.1 Checking for updates
+
+*More → Settings → ④ About & updates* shows the current version, how this copy was installed, and whether a newer release exists.
+
+- **Auto check on start** is on by default. It asks GitHub once per launch (cached for 6 hours) and shows a non-blocking bar under the toolbar when a new version exists. *✕* on that bar ignores the version until the next one is released.
+- The check sends your IP address to GitHub. Turn the switch off if that matters to you; manual *Check for updates* still works.
+- The bar never interrupts: if GitHub is unreachable you get one grey line in Settings, nothing else. Nothing is shown at startup.
+
+**Installer build** — *Download and install* fetches the `setup.exe` in the background, verifies its size and SHA-256 from the release metadata, then quits the app, runs the installer silently, and reopens it. `data/` is never touched. The installer is unsigned, so Windows SmartScreen may ask once: *More info → Run anyway*.
+
+**Portable / source build** — auto-install is disabled on purpose: running `setup.exe` there would install a **second copy** under `%LOCALAPPDATA%` instead of upgrading the one you are using. You get *Go to release page* instead; unzip over `FoodieTrail.exe` and `_internal\`, and never overwrite `data\`.
+
 ---
 
 ## ⌨️ 11. Keyboard shortcuts

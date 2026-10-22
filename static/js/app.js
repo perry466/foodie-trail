@@ -455,6 +455,10 @@ const App = {
       /* 地址联想：输入即搜（无需回车），poiActive 是键盘当前高亮项 */
       poiList:[], poiOpen:false, poiLoading:false, poiActive:-1, poiMsg:'', poiNeedKey:false,
       settings:{ key:'', security:'', webKey:'', connMsg:'', realKey:'' },
+      /* 版本与更新：模板里要用，所以全部用普通名字（下划线开头 Vue 3 不代理） */
+      appVersion:'', appMode:'', autoUpdateCheck:true,
+      updateInfo:{}, updateMsg:'', updateBusy:false, updateBanner:false, updateBannerLow:false,
+      dl:{ state:'idle', percent:0, received:0, total:0, error:'' },
       dash:null,
       importPreview:'', importReady:false, importFile:null,
       importBusy:false, importIndet:false, importPercent:0, importText:'',
@@ -463,7 +467,7 @@ const App = {
       draftNotice:'', draftSaved:false, _suppressDraft:false,
       /* 内部状态：下划线开头，Vue 3 不会代理到实例，只能在 JS 方法里用 this._xxx 访问，
          严禁出现在模板表达式中（生产版会抛 ReferenceError，整个组件渲染失败） */
-      _mapSeq:0, _mmT:null, _poiSeq:0,
+      _mapSeq:0, _mmT:null, _poiSeq:0, _dlTimer:null,
       /* 保存中标志：模板要用（禁用按钮 + 文案切换），所以必须用普通名字 */
       saving:false,
     };
@@ -477,6 +481,8 @@ const App = {
       const n=Math.max(60, this.renderCount||60);
       return this.visibleRecords.slice(0,n);
     },
+    /* 运行形态：设置面板里显示「安装版 / 绿色版 / 源码版」 */
+    modeText(){ return this.appMode==='installer' ? '安装版' : (this.appMode==='portable' ? '绿色版' : '源码版'); },
     /* 当前生效的筛选条件数（不含关键词与排序） */
     activeFilterCount(){
       const f=this.filters;
@@ -1077,7 +1083,125 @@ const App = {
         this.settings.security=cfg.security?this.maskKey(cfg.security):'';
         this.settings.webKey=''; this.settings.connMsg='';
         this.settingsOpen=true;
-      }catch(e){ toast('设置加载失败：'+e.message); }
+      }catch(e){
+        // 高德配置读失败也要能打开设置：更新检查与地图 Key 无关，
+        // 否则这个接口一报错，用户就永远进不到「检查更新」。
+        this.settingsOpen=true;
+        toast('地图 Key 读取失败：'+e.message);
+      }
+      this.loadVersion();
+    },
+    /* ---------- 版本与更新 ---------- */
+    async loadVersion(){
+      try{ const r=await API.get('/api/app/version'); this.appVersion=r.version||''; this.appMode=r.mode||''; }
+      catch(e){ /* 版本号读不到不影响主流程，静默 */ }
+    },
+    fmtDate(s){ try{ return new Date(s).toLocaleDateString('zh-CN'); }catch(e){ return ''; } },
+    /* force=true 跳过后端 6 小时缓存；启动时用 false，几乎不产生网络开销 */
+    async checkUpdate(force){
+      if(this.updateBusy) return;
+      this.updateBusy=true;
+      if(force) this.updateMsg='正在检查…';
+      try{
+        const r=await API.get('/api/update/check'+(force?'?force=1':''));
+        this.updateInfo=r||{};
+        if(!r || r.ok===false){
+          // 网络失败只写一行灰字，不弹窗、不打断：GitHub 在国内时通时不通
+          this.updateMsg='检查失败：'+((r&&r.reason)||'网络不可用');
+        }else if(r.hasUpdate){
+          this.updateMsg='发现新版本 v'+r.latest;
+          this._showUpdateBanner();
+        }else{
+          this.updateMsg='已是最新版本（v'+r.current+'）';
+          this.updateBanner=false;
+        }
+      }catch(e){
+        this.updateMsg='检查失败：'+e.message;
+      }finally{
+        this.updateBusy=false;
+      }
+    },
+    openUpdateFromBanner(){ this.updateBanner=false; this.openSettings(); },
+    /* 未配置高德 Key 时底部红条也占 top:74px（.map-banner），两条会叠在一起。
+       红条在 #map 层、更新条在 #ui 层，后者必然盖住前者，所以这里错开一行。 */
+    _showUpdateBanner(){
+      this.updateBannerLow=!!document.querySelector('.map-banner');
+      this.updateBanner=true;
+    },
+    dismissUpdate(){
+      this.updateBanner=false;
+      try{ localStorage.setItem('fm-skip-version', (this.updateInfo&&this.updateInfo.latest)||''); }catch(e){}
+      toast('已忽略该版本，下次有新版本再提醒');
+    },
+    setAutoUpdateCheck(v){
+      this.autoUpdateCheck=!!v;
+      try{ localStorage.setItem('fm-auto-update', v?'1':'0'); }catch(e){}
+      toast(v?'已开启启动时检查更新':'已关闭启动时检查更新');
+    },
+    openReleasePage(){
+      const url=(this.updateInfo&&this.updateInfo.htmlUrl)||'https://github.com/perry466/foodie-trail/releases';
+      window.open(url,'_blank','noopener');
+    },
+    async startUpdate(){
+      if(this.dl.state==='downloading') return;
+      this.updateBusy=true; this.updateMsg='正在下载安装包…';
+      try{
+        this.dl=await API.sendForm('/api/update/download','POST',{});
+        this._pollDownload();
+      }catch(e){
+        this.updateBusy=false;
+        this.updateMsg='下载失败：'+e.message;
+      }
+    },
+    _pollDownload(){
+      clearInterval(this._dlTimer);
+      this._dlTimer=setInterval(async()=>{
+        try{
+          const d=await API.get('/api/update/download');
+          this.dl=d;
+          if(d.state==='done'){
+            clearInterval(this._dlTimer); this._dlTimer=null;
+            this.updateBusy=false; this.updateMsg='下载完成，可以安装了';
+          }else if(d.state==='error'){
+            clearInterval(this._dlTimer); this._dlTimer=null;
+            this.updateBusy=false; this.updateMsg='下载失败：'+(d.error||'未知错误');
+          }
+        }catch(e){ /* 轮询失败不打断，下一轮继续 */ }
+      },800);
+    },
+    async installOrDownload(){
+      if(this.dl.state==='done'){ this.doInstall(); return; }
+      await this.startUpdate();
+    },
+    async doInstall(){
+      const ok=await this.askConfirm({
+        title:'立即升级？',
+        message:'程序会退出并启动安装程序，装完自动重新打开。data 目录（记录、照片、密钥）不会被删除。',
+        ok:'开始升级',
+      });
+      if(!ok) return;
+      this.updateBusy=true; this.updateMsg='正在启动安装程序…';
+      try{
+        await API.sendForm('/api/update/install','POST',{});
+        this.updateMsg='程序即将退出，安装完成后会自动重新打开';
+      }catch(e){
+        // 进程正在退出，fetch 有可能先断：给出可执行的下一步，而不是只报错
+        this.updateBusy=false;
+        this.updateMsg='启动安装失败：'+e.message+'（可手动运行 data/downloads 里的安装包）';
+      }
+    },
+    _initUpdate(){
+      try{ this.autoUpdateCheck=localStorage.getItem('fm-auto-update')!=='0'; }catch(e){ this.autoUpdateCheck=true; }
+      this.loadVersion();
+      if(!this.autoUpdateCheck) return;
+      let skip='';
+      try{ skip=localStorage.getItem('fm-skip-version')||''; }catch(e){}
+      // 延迟 2 秒：先让地图和清单把首屏请求跑完，不跟启动抢带宽
+      setTimeout(async()=>{
+        await this.checkUpdate(false);
+        const info=this.updateInfo||{};
+        if(info.ok && info.hasUpdate && info.latest && info.latest!==skip) this._showUpdateBanner();
+      },2000);
     },
     maskKey(k){ if(!k) return ''; return '••••••'+k.slice(-4); },
     async saveKey(){
@@ -1625,6 +1749,8 @@ const App = {
       if(this.filters.viewOnly) this.viewBounds=MapView.getBounds();
       await this.loadRecords();
     })();
+    // 检查更新：内部延迟 2 秒、失败静默，绝不阻塞首屏
+    this._initUpdate();
   },
 };
 

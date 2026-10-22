@@ -431,6 +431,54 @@ button{ font-family:inherit; cursor:pointer; }
 .settings-group{ border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:16px; background:rgba(15,23,42,.02); }
 .settings-group .sg-title{ font-weight:700; font-size:14px; color:var(--primary); margin-bottom:4px; }
 .settings-group .hint{ margin-bottom:10px; }
+
+/* ===== 新版本提示条：非模态，不打断操作 ===== */
+.upd-banner{
+  position:fixed; top:74px; left:50%; transform:translateX(-50%);
+  z-index:1450; pointer-events:auto;
+  display:flex; align-items:center; gap:10px;
+  padding:7px 8px 7px 14px; border-radius:999px;
+  max-width:min(92vw,540px); box-shadow:0 10px 26px rgba(15,23,42,.16);
+}
+/* 未配置 Key 时底部红条也占 top:74px，这里错开一行（由 JS 检测 .map-banner） */
+.upd-banner.low{ top:132px; }
+.ub-ico{ width:17px; height:17px; flex:none; color:var(--primary); }
+.ub-text{ display:flex; flex-direction:column; line-height:1.3; min-width:0; }
+.ub-text b{ font-size:13px; font-weight:700; }
+.ub-text span{ font-size:11px; color:var(--muted); }
+.ub-act{
+  flex:none; border:none; background:var(--primary); color:#fff;
+  font-size:12px; font-weight:600; padding:6px 13px; border-radius:999px;
+  transition:background .18s ease;
+}
+.ub-act:hover{ background:var(--primary-d); }
+.ub-x{
+  flex:none; width:26px; height:26px; border:none; background:transparent;
+  color:var(--muted); font-size:12px; border-radius:50%; line-height:1;
+}
+.ub-x:hover{ background:rgba(0,0,0,.06); color:var(--text); }
+[data-theme="dark"] .ub-x:hover{ background:rgba(255,255,255,.1); }
+
+/* 设置里的「关于与更新」 */
+.upd-mode{
+  display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
+  font-size:11px; color:var(--muted); border:1px solid var(--border);
+}
+.upd-box{
+  margin-top:10px; padding:12px 14px; border-radius:12px;
+  border:1px solid var(--border); background:rgba(240,80,47,.05);
+}
+.upd-head{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.upd-head b{ font-size:13px; color:var(--primary); }
+.upd-head span{ font-size:11px; color:var(--muted); }
+.upd-notes{
+  margin:6px 0 0; font-size:12px; color:var(--muted);
+  white-space:pre-wrap; word-break:break-word; max-height:96px; overflow:auto;
+}
+.upd-bar{ margin-top:10px; height:6px; border-radius:999px; background:var(--border); overflow:hidden; }
+.upd-bar-fill{ height:100%; background:var(--primary); border-radius:999px; transition:width .3s ease; }
+.upd-acts{ display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
+
 /* 设置面板内的次要操作（如仅清除安全密钥） */
 .mini-link{ border:none; background:none; padding:2px 0 0; font-size:12px; color:var(--muted); cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
 .mini-link:hover{ color:var(--primary); }

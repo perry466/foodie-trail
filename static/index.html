@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261021b" />
+  <link rel="stylesheet" href="/css/style.css?v=20261022a" />
 </head>
 <body>
   <!-- 地图：独立于 Vue 管控，避免重渲染破坏地图实例 -->
@@ -70,11 +70,24 @@
           </button>
           <button class="more-item" @click="openSettings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            设置 · 高德 Key
+            设置
           </button>
         </div>
       </transition>
     </header>
+
+    <!-- ===== 新版本提示条：非模态，不打断当前操作 ===== -->
+    <transition name="pop">
+      <div v-if="updateBanner" class="upd-banner glass" :class="{low: updateBannerLow}" role="status">
+        <svg class="ub-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></svg>
+        <div class="ub-text">
+          <b>新版本 v{{ updateInfo.latest }} 可用</b>
+          <span>当前 v{{ appVersion }}</span>
+        </div>
+        <button class="ub-act" @click="openUpdateFromBanner">查看</button>
+        <button class="ub-x" @click="dismissUpdate" title="忽略此版本" aria-label="忽略此版本">✕</button>
+      </div>
+    </transition>
 
     <!-- 不再用全屏遮罩：清单要与地图并存，遮罩会挡住地图拖动/缩放。
          关闭清单靠右上角 ✕ 或 Esc；点地图空白只关闭详情。 -->
@@ -356,7 +369,7 @@
     <transition name="modal">
       <div v-if="settingsOpen" class="modal-wrap" @click.self="settingsOpen=false">
         <div class="modal-card">
-          <div class="modal-head"><h3>设置 · 高德 Key</h3><button class="drawer-close" aria-label="关闭设置" title="关闭设置" @click="settingsOpen=false">✕</button></div>
+          <div class="modal-head"><h3>设置</h3><button class="drawer-close" aria-label="关闭设置" title="关闭设置" @click="settingsOpen=false">✕</button></div>
           <div class="modal-body">
             <p class="hint" style="margin-top:0">高德 Key 仅存于本地数据库（Fernet 加密）。个人实名免费。需申请两种 Key：</p>
             <div class="settings-group">
@@ -387,6 +400,58 @@
               <button class="btn-primary" style="margin-left:auto" @click="saveKey">保存</button>
             </div>
             <div class="form-msg" style="margin-top:10px">{{ settings.connMsg }}</div>
+
+            <div class="settings-group">
+              <div class="sg-title">④ 关于与更新</div>
+              <p class="hint" style="margin-bottom:8px">
+                当前版本 <b>v{{ appVersion || '…' }}</b>
+                <span class="upd-mode" v-if="appMode">{{ modeText }}</span>
+              </p>
+
+              <div class="switch-row">
+                <div>
+                  <div class="switch-name">启动时检查更新</div>
+                  <p class="hint" style="margin:2px 0 0">每次打开会向 GitHub 查一次最新版本（会暴露本机 IP）。关掉后只能在这里手动检查。</p>
+                </div>
+                <button class="switch" :class="{on: autoUpdateCheck}" role="switch" aria-label="启动时检查更新" :aria-checked="autoUpdateCheck" :aria-pressed="autoUpdateCheck" @click="setAutoUpdateCheck(!autoUpdateCheck)"></button>
+              </div>
+
+              <div class="upd-box" v-if="updateInfo.hasUpdate">
+                <div class="upd-head">
+                  <b>可升级到 v{{ updateInfo.latest }}</b>
+                  <span v-if="updateInfo.publishedAt">{{ fmtDate(updateInfo.publishedAt) }}</span>
+                </div>
+                <p class="upd-notes" v-if="updateInfo.notes">{{ updateInfo.notes }}</p>
+
+                <div class="upd-bar" v-if="dl.state==='downloading'||dl.state==='verifying'">
+                  <div class="upd-bar-fill" :style="{width: (dl.state==='verifying'?100:dl.percent)+'%'}"></div>
+                </div>
+
+                <div class="upd-acts">
+                  <button class="btn-primary" v-if="updateInfo.canAutoInstall"
+                          :disabled="updateBusy || dl.state==='downloading'"
+                          @click="installOrDownload">
+                    <template v-if="dl.state==='downloading'">下载中 {{ dl.percent }}%</template>
+                    <template v-else-if="dl.state==='verifying'">校验中…</template>
+                    <template v-else-if="dl.state==='done'">立即安装并重启</template>
+                    <template v-else>下载并安装</template>
+                  </button>
+                  <button class="btn-ghost" @click="openReleasePage">前往 Release 页面</button>
+                </div>
+
+                <p class="hint" style="margin-top:8px" v-if="updateInfo.canAutoInstall">
+                  安装时程序会退出，装完自动重新打开；<b>data 目录不会被删除</b>。安装包没有代码签名，Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可。
+                </p>
+                <p class="hint" style="margin-top:8px" v-else>
+                  当前是{{ modeText }}，无法自动安装。请下载后手动替换 exe 与 <code>_internal</code>，<b>不要覆盖 data 目录</b>。
+                </p>
+              </div>
+
+              <div class="upd-acts" style="margin-top:10px">
+                <button class="btn-ghost" :disabled="updateBusy" @click="checkUpdate(true)">{{ updateBusy ? '检查中…' : '检查更新' }}</button>
+              </div>
+              <div class="form-msg" style="margin-top:8px">{{ updateMsg }}</div>
+            </div>
           </div>
         </div>
       </div>
@@ -713,6 +778,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261021b"></script>
+  <script src="/js/app.js?v=20261022a"></script>
 </body>
 </html>

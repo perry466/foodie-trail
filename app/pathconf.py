@@ -33,6 +33,11 @@ DB_PATH = os.path.join(DATA_DIR, "foodmap.db")
 FERNET_KEY_PATH = os.path.join(DATA_DIR, ".fernet.key")
 STATIC_DIR = os.path.join(BUNDLE_DIR, "static")
 
+# 更新相关：下载的安装包与「上次检查结果」缓存。
+# 下载目录必须留在 DATA_DIR 内部——安装时会用 realpath 校验它，越界一律拒绝执行。
+DOWNLOADS_DIR = os.path.join(DATA_DIR, "downloads")
+UPDATE_CACHE_PATH = os.path.join(DATA_DIR, "update.json")
+
 DB_VERSION = 1
 
 # 照片压缩参数：长边上限、JPEG 质量、单张字节上限、单条记录张数上限（经验取值，可按需调整）

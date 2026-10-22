@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 
-from . import crypto
+from . import crypto, update
 from .coords import wgs84_to_gcj02, haversine
 from .db import get_conn, init_db
 from .pathconf import (
@@ -31,6 +31,7 @@ from .validate import (
     build_record_payload, normalize_checkin, normalize_hours, normalize_price,
     normalize_tags, normalize_text, validate_record,
 )
+from .version import VERSION
 
 # ---- 输入体量上限 ----
 # 单张上传图片原始大小（手机直出一般 2-8MB，20MB 足够，且避免整块读进内存撑爆）
@@ -44,7 +45,7 @@ MAX_IMAGE_PIXELS = 64_000_000
 # 备份记录条数上限，防止一份文件塞进上百万条把导入拖死
 MAX_IMPORT_RECORDS = 200_000
 
-app = FastAPI(title="FoodMap", version="1.0.0")
+app = FastAPI(title="FoodMap", version=VERSION)
 repo = SQLiteRepository()
 
 # 本服务只服务自身页面，任何外部站点都不得跨站读写数据。
@@ -540,6 +541,45 @@ def test_connection():
         return {"ok": True, "msg": "Web 服务 Key 连接成功"}
     info = data.get("info", "未知错误")
     return {"ok": False, "msg": f"高德返回: {info}"}
+
+
+# ---------- 版本 / 更新 ----------
+# 说明：检查更新永远不抛 500。GitHub 在国内时通时不通，网络问题必须由前端
+# 静默处理（见 app/update.py 顶部三条约束），不能变成"打开就报错"。
+@app.get("/api/app/version")
+def app_version():
+    """本地版本与运行形态，纯读内存，不发任何网络请求。"""
+    return {"version": VERSION, "mode": update.detect_mode()}
+
+
+@app.get("/api/update/check")
+def update_check(force: int = 0):
+    """查最新 Release。force=1 跳过 6 小时缓存。"""
+    return update.check(force=bool(force))
+
+
+@app.post("/api/update/download")
+def update_download():
+    """开始后台下载安装包；进度用 GET 同一路径查。"""
+    try:
+        return update.start_download()
+    except update.UpdateError as e:
+        return JSONResponse(status_code=e.status, content={"ok": False, "msg": e.message})
+
+
+@app.get("/api/update/download")
+def update_download_progress():
+    return update.progress()
+
+
+@app.post("/api/update/install")
+def update_install():
+    """启动安装器并退出本进程。只对安装版开放。"""
+    try:
+        return update.install()
+    except update.UpdateError as e:
+        return JSONResponse(status_code=e.status, content={"ok": False, "msg": e.message})
+
 
 
 # ---------- 高德代理（数据请求走后端，前端不持 Key） ----------
