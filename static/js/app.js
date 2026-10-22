@@ -32,6 +32,51 @@ async function err(r){
     e.status=r.status; return e;
   }catch{ const e=new Error(base); e.status=r.status; return e; }
 }
+
+/* ---------------- 版本号比较 ----------------
+   和 backend 一样必须按数字元组比：字符串比较下 "1.0.10" < "1.0.9"，
+   会让「刚更新完」的判断永远不成立。 */
+function verNum(v){
+  const m=String(v||'').match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  return m ? [+m[1], +(m[2]||0), +(m[3]||0)] : [0,0,0];
+}
+function verCmp(a,b){
+  const x=verNum(a), y=verNum(b);
+  for(let i=0;i<3;i++){ if(x[i]!==y[i]) return x[i]>y[i]?1:-1; }
+  return 0;
+}
+
+/* ---------------- 开屏动画 ----------------
+   纯 DOM 操作、不依赖 Vue：首屏数据（地图 + 记录）到位后才淡出，最少停留
+   900ms（否则一闪而过像故障），最多 2.8s 强制让开（否则接口卡住就是一片白）。 */
+const SPLASH_MIN_MS=900, SPLASH_MAX_MS=3200, _splashAt=Date.now();
+let _splashDone=false;
+/* 先把「已更新到 vX」写上去、再等数据：这两件事必须分开。
+   合在一起写的话，首屏慢（地图/接口 2–4 秒）时文案是在淡出前一瞬间才换上去的，
+   用户根本看不到——那正是最需要它的时候。 */
+function splashNote(note){
+  const el=document.getElementById('splash');
+  if(!el || !note) return;
+  el.classList.add('updated');
+  el.dataset.noted='1';
+  const sub=document.getElementById('splashSub');
+  if(sub) sub.textContent=note;
+}
+function splashReady(note){
+  if(_splashDone) return;
+  _splashDone=true;
+  const el=document.getElementById('splash');
+  if(!el) return;
+  if(note) splashNote(note);
+  // 更新提示要留够阅读时间；普通启动则是最少停留 900ms，避免一闪而过像故障
+  const floor = el.dataset.noted==='1' ? 1300 : SPLASH_MIN_MS;
+  const wait=Math.max(0, floor-(Date.now()-_splashAt));
+  setTimeout(()=>{
+    el.classList.add('out');
+    setTimeout(()=>{ if(el.parentNode) el.remove(); }, 520);
+  }, wait);
+}
+setTimeout(()=>splashReady(), SPLASH_MAX_MS);
 /* 带上传进度 + 响应流读取的 POST：导入大文件时用（fetch 拿不到上传进度） */
 /* 上传文件并读取响应；响应是 NDJSON 时逐行触发 onEvent（导入写入进度）。
    不用 XHR：实测 Chrome 对这种小分块流式响应，onprogress 会停发且 load 不触发；
@@ -459,6 +504,10 @@ const App = {
       appVersion:'', appMode:'', autoUpdateCheck:true,
       updateInfo:{}, updateMsg:'', updateBusy:false, updateBanner:false, updateBannerLow:false,
       dl:{ state:'idle', percent:0, received:0, total:0, error:'' },
+      /* 安装阶段（2.0）：旧进程一退出，页面就再也拿不到数据，所以整块界面
+         换成进度卡。phase: '' | closing | installing | done | timeout */
+      installOpen:false, installPhase:'', installPercent:0, installTarget:'',
+      installError:'', installCountdown:0, installDead:false,
       dash:null,
       importPreview:'', importReady:false, importFile:null,
       importBusy:false, importIndet:false, importPercent:0, importText:'',
@@ -468,6 +517,7 @@ const App = {
       /* 内部状态：下划线开头，Vue 3 不会代理到实例，只能在 JS 方法里用 this._xxx 访问，
          严禁出现在模板表达式中（生产版会抛 ReferenceError，整个组件渲染失败） */
       _mapSeq:0, _mmT:null, _poiSeq:0, _dlTimer:null, _lastCheckAt:0,
+      _installTimer:null, _watchTimer:null, _reloadTimer:null, _installT0:0, _installSeenDeath:false,
       /* 保存中标志：模板要用（禁用按钮 + 文案切换），所以必须用普通名字 */
       saving:false,
     };
@@ -496,6 +546,36 @@ const App = {
       if(this.appMode==='source') return '源码版：在项目目录 git pull 后重启服务即可，无需下载安装包。';
       if(this.appMode==='portable') return '绿色版：下载后替换 FoodieTrail.exe 与 _internal，不要覆盖 data 目录。';
       return '安装版：当前拿不到安装包信息（GitHub 接口受限），可点「复制下载链接」用浏览器下载后覆盖安装。';
+    },
+    /* ---------- 安装遮罩的文案与步骤（模板直接取用，别在模板里写逻辑） ---------- */
+    installTitle(){
+      const v=this.installTarget?'v'+this.installTarget:'';
+      if(this.installPhase==='done') return '已更新到 '+v;
+      if(this.installPhase==='timeout') return '安装可能没有完成';
+      if(this.installPhase==='closing') return '正在准备安装';
+      return v ? ('正在安装 '+v) : '正在安装新版本';
+    },
+    installSub(){
+      if(this.installPhase==='done') return (this.installCountdown>0)
+        ? (this.installCountdown+' 秒后自动打开新版本…')
+        : '正在打开新版本…';
+      if(this.installPhase==='timeout') return this.installError || '没有检测到新版本启动，可手动打开安装包再装一次。';
+      if(this.installPhase==='closing') return '正在关闭当前版本，马上开始安装。';
+      return '安装期间界面不可用，通常需要 10–30 秒，请不要关闭这个窗口。';
+    },
+    installSteps(){
+      const p=this.installPhase;
+      const ok = p==='done';
+      const s1 = p==='closing' ? 'run' : (ok||p==='installing'||p==='timeout' ? 'done' : 'wait');
+      const s2 = p==='closing' ? 'wait'
+               : p==='installing' ? 'run'
+               : p==='timeout' ? 'fail' : 'done';
+      const s3 = ok ? 'done' : 'wait';
+      return [
+        { k:'close',   label:'关闭当前版本', state:s1 },
+        { k:'install', label:'安装新版本'+(this.installTarget?' v'+this.installTarget:''), state:s2 },
+        { k:'restart', label:'重新启动', state:s3 },
+      ];
     },
     /* 当前生效的筛选条件数（不含关键词与排序） */
     activeFilterCount(){
@@ -1111,6 +1191,17 @@ const App = {
       try{ const r=await API.get('/api/app/version'); this.appVersion=r.version||''; this.appMode=r.mode||''; }
       catch(e){ /* 版本号读不到不影响主流程，静默 */ }
     },
+    /* 刚更新完的判断：安装前写了 fm-updating=<目标版本>，这里只在新版本真的
+       起来（本地版本 ≥ 目标）时才消费掉它，并让开屏显示「已更新到 vX」。
+       安装失败时标记留着不动——把一次失败显示成「已更新」比不显示更糟。 */
+    _updatedNote(){
+      let target='';
+      try{ target=localStorage.getItem('fm-updating')||''; }catch(e){ return ''; }
+      if(!target || !this.appVersion) return '';
+      if(target!=='1' && verCmp(this.appVersion, target)<0) return '';
+      try{ localStorage.removeItem('fm-updating'); }catch(e){}
+      return '已更新到 v'+this.appVersion;
+    },
     fmtDate(s){ try{ return new Date(s).toLocaleDateString('zh-CN'); }catch(e){ return ''; } },
     /* force=true 跳过后端 30 分钟缓存；启动时用 false，几乎不产生网络开销 */
     async checkUpdate(force){
@@ -1268,6 +1359,11 @@ const App = {
         toast('打开文件夹失败：'+(e.message||'未知原因'));
       }
     },
+    /* 点「立即安装并重启」之后的三段式流程：
+       ① closing    —— 调 /api/update/install，旧进程 1.2 秒后退出
+       ② installing —— 接口开始连不上，说明旧进程已死、安装器在跑
+       ③ done        —— 接口又通了，说明新版本已经起来；同端口下直接 reload 复用本标签页
+       旧版（1.0.x）在这里只改一行文字，用户看着一个半死的界面，不知道到底装没装。 */
     async doInstall(){
       const ok=await this.askConfirm({
         title:'立即升级？',
@@ -1275,19 +1371,121 @@ const App = {
         ok:'开始升级',
       });
       if(!ok) return;
-      this.updateBusy=true; this.updateMsg='正在启动安装程序…';
+      this.installTarget=(this.updateInfo&&this.updateInfo.latest)||'';
+      // 先把「正在更新到哪个版本」落盘：新标签页起来时靠它判断要不要显示「已更新」
+      try{ localStorage.setItem('fm-updating', this.installTarget||'1'); }catch(e){}
+      // 关掉原来的界面：设置面板、提示条、更多菜单全收起来，只留安装进度卡
+      this.settingsOpen=false; this.moreOpen=false; this.updateBanner=false;
+      this.installOpen=true; this.installError=''; this.installCountdown=0; this.installDead=false;
+      this.updateBusy=true;
+      this._setInstallPhase('closing');
+      this._startInstallTicker();
       try{
-        await API.sendForm('/api/update/install','POST',{});
-        this.updateMsg='程序即将退出，安装完成后会自动重新打开';
+        const r=await API.sendForm('/api/update/install','POST',{});
+        if(r&&r.version) this.installTarget=r.version;
+        this._setInstallPhase('installing');
       }catch(e){
-        // 进程正在退出，fetch 有可能先断：给出可执行的下一步，而不是只报错
-        this.updateBusy=false;
-        this.updateMsg='启动安装失败：'+e.message+'（可手动运行 data/downloads 里的安装包）';
+        // 进程正在退出，fetch 可能先断——这不是失败，继续按「安装中」观察
+        if(/Failed to fetch|NetworkError|load failed|aborted|network/i.test(e.message||'')){
+          this._setInstallPhase('installing');
+        }else{
+          this._setInstallPhase('timeout', '启动安装程序失败：'+(e.message||'未知原因'));
+          this._stopInstallWatchers();
+          return;
+        }
       }
+      this._watchRestart();
+    },
+    _setInstallPhase(p, msg){
+      this.installPhase=p;
+      if(msg!==undefined) this.installError=msg;
+      if(p==='closing'&&this.installPercent<6) this.installPercent=6;
+      if(p==='installing'&&this.installPercent<14) this.installPercent=14;
+      if(p==='done'){ this.installPercent=100; this.updateBusy=false; }
+      // 服务已经没了的时候，「打开安装包位置」这个接口也调不通，别给它留按钮
+      if(p==='timeout') this.installDead=!!this._installSeenDeath;
+    },
+    /* 进度条靠两条信息拼出来：前端能确定的「阶段」+ 对服务存活状态的探测。
+       不假装知道安装器的真实百分比——Inno 静默模式没有可读进度，编一个精确
+       数字反而会在 99% 卡住，比不确定更难受。 */
+    _startInstallTicker(){
+      clearInterval(this._installTimer);
+      this._installTimer=setInterval(()=>{
+        if(!this.installOpen) return;
+        // 上限按阶段递进：安装中最多走到 88%，剩下的留到「检测到新版本」那一下
+        const cap = this.installPhase==='installing' ? 88
+                  : this.installPhase==='closing' ? 12
+                  : this.installPhase==='done' ? 100 : this.installPercent;
+        if(this.installPercent<cap){
+          // 0.03 是「每 450ms 吃掉剩余距离的 3%」：约 10 秒到 30%，20 秒到 70%，
+          // 真装完再跳到 100%。比线性好——不会在前 5 秒就冲到 90% 然后干等。
+          const step=this.installPhase==='installing'
+            ? Math.max(0.3, (cap-this.installPercent)*0.03)
+            : 3;
+          this.installPercent=Math.min(cap, +(this.installPercent+step).toFixed(1));
+        }
+      },450);
+    },
+    _stopInstallWatchers(){
+      clearInterval(this._watchTimer); this._watchTimer=null;
+      clearInterval(this._installTimer); this._installTimer=null;
+      clearTimeout(this._reloadTimer); this._reloadTimer=null;
+    },
+    /* 每 900ms 探一次 /api/app/version：
+       失败 = 旧进程已退出（进入安装中）；再次成功 = 新版本起来了（进入完成）。
+       全程 150 秒上限，超时给手动出口，绝不让用户对着一个永远转圈的界面。 */
+    _watchRestart(){
+      clearInterval(this._watchTimer);
+      const t0=Date.now(); this._installT0=t0; this._installSeenDeath=false;
+      this._watchTimer=setInterval(async()=>{
+        if(!this.installOpen){ clearInterval(this._watchTimer); this._watchTimer=null; return; }
+        if(Date.now()-t0>150000){
+          this._setInstallPhase('timeout','等了 2 分半还没检测到新版本启动。可点「打开安装包位置」手动装一次。');
+          this._stopInstallWatchers();
+          return;
+        }
+        try{
+          const r=await API.get('/api/app/version');
+          if(this._installSeenDeath && r && r.version){
+            clearInterval(this._watchTimer); this._watchTimer=null;
+            this._finishInstall(r.version);
+          }
+        }catch(e){
+          // 连不上 = 旧进程已经退出，安装器正在跑
+          if(!this._installSeenDeath){
+            this._installSeenDeath=true;
+            this._setInstallPhase('installing');
+          }
+        }
+      },900);
+    },
+    _finishInstall(version){
+      this.appVersion=version||this.installTarget||this.appVersion;
+      try{ localStorage.setItem('fm-updating', this.installTarget||this.appVersion||'1'); }catch(e){}
+      this._setInstallPhase('done');
+      clearInterval(this._installTimer); this._installTimer=null;
+      // 倒计时 3 秒后自动 reload：同端口下本标签页直接变成新版界面，
+      // 用户即使关掉启动器新开的标签页也不会停在一个过期的遮罩上。
+      this.installCountdown=3;
+      clearInterval(this._reloadTimer);
+      this._reloadTimer=setInterval(()=>{
+        this.installCountdown-=1;
+        if(this.installCountdown<=0){ this._stopInstallWatchers(); this.reloadApp(); }
+      },1000);
+    },
+    reloadApp(){
+      this._stopInstallWatchers();
+      try{ location.reload(); }catch(e){ /* 极端情况下 reload 被拦，用户还能手动刷新 */ }
+    },
+    /* 安装没成功、但服务还活着（比如 409/500）：必须留一条退回应用的路，
+       否则用户被一张报错卡片钉死在界面上，只能手动刷新。 */
+    closeInstall(){
+      this._stopInstallWatchers();
+      this.installOpen=false; this.updateBusy=false;
+      this._syncDownload();
     },
     _initUpdate(){
       try{ this.autoUpdateCheck=localStorage.getItem('fm-auto-update')!=='0'; }catch(e){ this.autoUpdateCheck=true; }
-      this.loadVersion();
       if(!this.autoUpdateCheck) return;
       let skip='';
       try{ skip=localStorage.getItem('fm-skip-version')||''; }catch(e){}
@@ -1784,6 +1982,8 @@ const App = {
     // 全局快捷键 & 点击外部关闭浮层
     document.addEventListener('keydown',e=>{
       if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      // 安装遮罩期间屏蔽所有快捷键：这时后端已经没了，任何操作都只会报错
+      if(this.installOpen) return;
       if($('#lightbox') && !$('#lightbox').classList.contains('hidden')){
         if(e.key==='Escape') closeLightbox();
         else if(e.key==='ArrowLeft') lbNav(-1);
@@ -1838,11 +2038,17 @@ const App = {
     window.addEventListener('popstate',()=>{ this._readURL(); this.loadRecords(); });
     // 启动
     (async()=>{
+      // 版本号先取：开屏要靠它判断「是不是刚更新完」，本地接口很快，不拖首屏
+      await this.loadVersion();
+      const note=this._updatedNote();
+      splashNote(note);          // 先换文案，再等地图和记录
       try{ await MapView.init(); }catch(e){ console.error(e); toast('地图加载失败：'+e.message); }
       if(MapView.cfg) this.mapConfig = MapView.cfg;
       // URL 里带 viewOnly 时，等地图就绪后再取一次视野，否则 bounds 是空的
       if(this.filters.viewOnly) this.viewBounds=MapView.getBounds();
       await this.loadRecords();
+      splashReady(note);
+      if(note) setTimeout(()=>toast(note), 900);
     })();
     // 检查更新：内部延迟 2 秒、失败静默，绝不阻塞首屏
     this._initUpdate();

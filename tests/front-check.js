@@ -35,6 +35,7 @@ const ctx = {
   document: {
     querySelector: () => fakeEl(),
     querySelectorAll: () => [],
+    getElementById: () => null,          // 开屏层在真实页面里才有，这里返回 null 走「没有就跳过」
     documentElement: { getAttribute: () => null, setAttribute: () => {} },
     addEventListener: () => {},
     createElement: () => fakeEl(),
@@ -56,7 +57,7 @@ const ctx = {
 
 vm.createContext(ctx);
 vm.runInContext(
-  src + ';globalThis.__App=App;globalThis.__MapView=MapView;globalThis.__API=API;globalThis.__recPath=recPath;globalThis.__serializeHours=serializeHours;',
+  src + ';globalThis.__App=App;globalThis.__MapView=MapView;globalThis.__API=API;globalThis.__recPath=recPath;globalThis.__serializeHours=serializeHours;globalThis.__verCmp=verCmp;',
   ctx
 );
 
@@ -267,6 +268,38 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   app.enterSelect();
   check('进入批量选择会同步 URL', synced === 1 && app.panel === 'list', `synced=${synced}`);
   app._syncURL = realSync;
+
+  // ---- 2.0：版本比较、安装步骤状态机、「刚更新完」的判断 ----
+  check('版本按数字元组比较（2.0.0 > 1.0.9）', ctx.__verCmp('2.0.0', '1.0.9') === 1, ctx.__verCmp('2.0.0', '1.0.9'));
+  check('补丁位两位数不比字符串（1.0.10 > 1.0.9）', ctx.__verCmp('1.0.10', '1.0.9') === 1);
+  check('同版本比较为 0', ctx.__verCmp('2.0.0', '2.0.0') === 0);
+
+  const steps = (phase, target) => {
+    app.installPhase = phase;
+    app.installTarget = target || '';
+    return ctx.__App.computed.installSteps.call(app);
+  };
+  const st1 = steps('installing', '2.0.0');
+  check('安装中：已关闭 + 安装进行中 + 待重启',
+    st1[0].state === 'done' && st1[1].state === 'run' && st1[2].state === 'wait',
+    st1.map((s) => s.state).join(','));
+  check('安装中步骤带目标版本号', /2\.0\.0/.test(st1[1].label), st1[1].label);
+  check('安装完成：三步全完成', steps('done', '2.0.0').every((s) => s.state === 'done'));
+  check('安装超时：安装步骤标失败', steps('timeout', '2.0.0')[1].state === 'fail');
+
+  // localStorage 桩换成可写字典：标记只能在新版本真正起来后才被消费
+  const store = {};
+  ctx.localStorage = {
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => { store[k] = v; },
+    removeItem: (k) => { delete store[k]; },
+  };
+  ctx.localStorage.setItem('fm-updating', '2.0.0');
+  app.appVersion = '1.0.9';
+  check('旧版本启动不消费更新标记', app._updatedNote() === '' && store['fm-updating'] === '2.0.0');
+  app.appVersion = '2.0.0';
+  check('新版本启动显示已更新到 v2.0.0', app._updatedNote() === '已更新到 v2.0.0', app._updatedNote());
+  check('更新标记消费后清空', !('fm-updating' in store));
 
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));

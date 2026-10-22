@@ -205,7 +205,7 @@ def test_install_spawns_cmd_chain_as_plain_string(monkeypatch, tmp_path):
         captured["flags"] = kw.get("creationflags")
 
     monkeypatch.setattr(upd.subprocess, "Popen", fake_popen)
-    upd.install()
+    result = upd.install()
 
     line = captured["cmdline"]
     assert isinstance(line, str) and line.startswith("cmd.exe /c ")
@@ -213,6 +213,9 @@ def test_install_spawns_cmd_chain_as_plain_string(monkeypatch, tmp_path):
     assert 'start "" /wait' in line             # start 的空标题要原样保留
     assert str(target) in line and "/VERYSILENT" in line
     assert captured["flags"] == 0x08000000      # 只用 CREATE_NO_WINDOW
+    # 前端靠 version 在安装遮罩上写「正在安装 vX」，并在新进程里判断是否已更新
+    assert result["version"] == "9.9.9", result
+    assert result["willExit"] is True
 
 
 def test_reveal_download_opens_fixed_directory_only(monkeypatch, tmp_path):

@@ -54,6 +54,7 @@
 - 🖼 **Photos** — EXIF orientation corrected, long edge resized to 1280 px and re-encoded as JPEG (target ≤ 500 KB), lightbox with arrow-key navigation.
 - 📝 **Drafts** — save unfinished records as drafts with a badge; the add-form autosaves to `localStorage` so an accidental close doesn't lose typing.
 - 💾 **Backup & restore** — JSON export (with or without photos) → import with **preview → confirm**, live progress, and per-record transactions.
+- 🔄 **Updates that show what they're doing** — check GitHub for a new release, download with a real progress bar (cancellable at any point), then a three-step install screen (close → install → restart) that reloads itself into the new version. A ~1 s splash on every launch says **"Updated to vX"** when you just came from an older build.
 - 🎨 **Light / dark theme**, keyboard shortcuts (`n` new, `/` search, `f` filter, `Esc` step back).
 - 🔒 **Local only** — the server binds `127.0.0.1`, rejects cross-site origins, and Amap keys are encrypted at rest with Fernet.
 
@@ -289,7 +290,7 @@ Drafts are included by default, and the current filters still apply — clear th
 
 ```bash
 python -m pytest tests -q      # 183 backend cases
-node tests/front-check.js      # 38 front-end assertions (Node 18+)
+node tests/front-check.js      # 48 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
 
@@ -368,7 +369,7 @@ All endpoints are under `/api` on `127.0.0.1` only; requests from other origins 
 | POST | `/api/update/download` | start downloading the installer in the background (installer build only) |
 | GET | `/api/update/download` | download progress (`state`, `percent`, `received`, `total`) |
 | POST | `/api/update/cancel` | cancel an in-flight download; idempotent, returns the same progress shape (`state` → `cancelling` → `cancelled`, `.part` removed) |
-| POST | `/api/update/install` | re-verify the downloaded package (size + sha256), launch the installer, then exit |
+| POST | `/api/update/install` | re-verify the downloaded package (size + sha256), launch the installer, then exit; returns `{ok, willExit, version, delay}` so the UI can label the install screen |
 | POST | `/api/update/reveal` | open the downloads folder so the user can run the installer manually |
 
 > 🔄 **Update endpoints never fail loudly.** If GitHub is unreachable, `/api/update/check` returns `{"ok": false, "reason": "..."}` with HTTP 200 — the UI shows one grey line and never blocks startup. Only the installer build can auto-install; portable and source builds are pointed to the release page, because silently running `setup.exe` there would install a *second* copy instead of upgrading the current one.

@@ -54,6 +54,7 @@
 - 🖼 **照片** —— 自动校正 EXIF 方向，长边压到 1280 px 重编码 JPEG（目标 ≤ 500 KB），详情页支持灯箱与方向键翻页。
 - 📝 **草稿** —— 没填完可以先存草稿（列表带角标、可单独筛）；新增表单还会自动存到 `localStorage`，误关不丢。
 - 💾 **备份与恢复** —— JSON 导出（可含照片）→ 导入走 **预览 → 确认**，有实时进度，单条事务。
+- 🔄 **更新过程看得见** —— 查 GitHub 有无新版本、带真实进度条下载（随时可取消）、点安装后换成三步进度界面（关掉应用 → 安装 → 重新启动）并自动刷成新版本；每次打开有约 1 秒开屏动画，刚更新完会直接写「**已更新到 vX**」。
 - 🎨 **浅色 / 深色主题**，快捷键 `n` 新建、`/` 搜索、`f` 筛选、`Esc` 逐层返回。
 - 🔒 **只在本机** —— 只监听 `127.0.0.1`、拒绝跨站来源，高德 Key 用 Fernet 加密存库。
 
@@ -287,7 +288,7 @@ data/
 
 ```bash
 python -m pytest tests -q      # 后端 183 例
-node tests/front-check.js      # 前端 38 项断言（Node 18+）
+node tests/front-check.js      # 前端 48 项断言（Node 18+）
 tests\run-tests.bat            # 两条一起跑，退出码 0 / 1 / 2（2 = 缺 Node）
 ```
 
@@ -366,7 +367,7 @@ cat hooks/pre-commit > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 | POST | `/api/update/download` | 后台下载安装包（仅安装版可用） |
 | GET | `/api/update/download` | 下载进度（`state`、`percent`、`received`、`total`） |
 | POST | `/api/update/cancel` | 取消正在进行的下载；幂等，返回同样的进度结构（`state` → `cancelling` → `cancelled`，`.part` 会被删掉） |
-| POST | `/api/update/install` | 复核安装包（大小 + sha256）后启动安装程序并退出 |
+| POST | `/api/update/install` | 复核安装包（大小 + sha256）后启动安装程序并退出；返回 `{ok, willExit, version, delay}` 供前端标注安装界面 |
 | POST | `/api/update/reveal` | 打开下载目录，供自动安装失败时手动双击安装包 |
 
 > 🔄 **更新接口不会“大声失败”**：GitHub 连不上时 `/api/update/check` 仍返回 HTTP 200 与 `{"ok": false, "reason": "..."}`，界面只写一行灰字，绝不阻塞启动。只有安装版能自动安装；绿色版与源码版会被引导到 Release 页面手动下载——在那两种形态里静默跑 `setup.exe` 会**再装一份**，而不是升级当前这一份。

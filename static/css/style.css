@@ -1073,3 +1073,105 @@ body.fm-list-open .map-banner{ left:calc(50% + 214px); max-width:min(480px,calc(
   animation:impslide .9s linear infinite;
 }
 @keyframes impslide{ to{ background-position:-28px 0; } }
+
+/* ============================================================
+   开屏动画（v2.0）
+   纯静态层，在 Vue 挂载之前就已经画出来了：首屏数据到位后由
+   app.js 的 splashReady() 淡出；坐标、层级必须高于一切（含地图与菜单）。
+   ============================================================ */
+.splash{
+  position:fixed; inset:0; z-index:4000;
+  display:flex; align-items:center; justify-content:center;
+  background:radial-gradient(1100px 620px at 50% 18%, #ffffff 0%, var(--bg) 62%, #eceef1 100%);
+  transition:opacity .42s ease, visibility .42s ease;
+}
+[data-theme="dark"] .splash{
+  background:radial-gradient(1100px 620px at 50% 18%, #1d2027 0%, #14161a 62%, #101216 100%);
+}
+.splash.out{ opacity:0; visibility:hidden; pointer-events:none; }
+.splash-inner{ display:flex; flex-direction:column; align-items:center; gap:0; }
+.splash-mark{ color:var(--primary); width:56px; height:56px; animation:splashPop .62s cubic-bezier(.2,.9,.25,1) both; }
+.splash-mark svg{ width:100%; height:100%; display:block; filter:drop-shadow(0 8px 18px rgba(240,80,47,.28)); }
+.splash-name{
+  margin-top:14px; font-size:19px; font-weight:700; letter-spacing:.18em; text-indent:.18em;
+  animation:splashRise .6s .1s cubic-bezier(.2,.9,.25,1) both;
+}
+.splash-sub{
+  margin-top:8px; font-size:12px; color:var(--muted); letter-spacing:.04em;
+  animation:splashRise .6s .18s cubic-bezier(.2,.9,.25,1) both;
+}
+.splash-bar{
+  position:relative; margin-top:22px; width:150px; height:3px; border-radius:99px;
+  background:var(--border); overflow:hidden;
+  animation:splashRise .6s .24s cubic-bezier(.2,.9,.25,1) both;
+}
+.splash-bar i{
+  position:absolute; inset:0 auto 0 0; width:44%; border-radius:99px; background:var(--primary);
+  animation:splashSlide 1.05s ease-in-out infinite;
+}
+/* 刚更新完：进度条走满并变绿，文字换成「已更新到 vX」 */
+.splash.updated .splash-bar i{ animation:none; width:100%; background:#22c55e; transition:width .5s ease, background .3s ease; }
+.splash.updated .splash-sub{ color:#16a34a; font-weight:600; }
+@keyframes splashPop{ from{ opacity:0; transform:scale(.72) translateY(10px); } to{ opacity:1; transform:none; } }
+@keyframes splashRise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:none; } }
+@keyframes splashSlide{ 0%{ transform:translateX(-110%); } 100%{ transform:translateX(260%); } }
+
+/* ============================================================
+   安装新版本遮罩（v2.0）
+   点「立即安装并重启」后，旧进程 1.2 秒内就会退出，之后整个页面再也
+   拿不到任何接口数据。与其留着一个「点什么都没反应」的界面，不如整块
+   换成进度卡：关掉应用 → 安装 → 重新启动。
+   ============================================================ */
+.install-screen{
+  position:fixed; inset:0; z-index:2600; pointer-events:auto;
+  display:flex; align-items:center; justify-content:center; padding:20px;
+  background:rgba(15,23,42,.52);
+  -webkit-backdrop-filter:blur(10px) saturate(140%);
+  backdrop-filter:blur(10px) saturate(140%);
+}
+[data-theme="dark"] .install-screen{ background:rgba(6,8,12,.72); }
+.is-card{
+  width:min(92vw,430px); padding:26px 26px 20px; border-radius:20px;
+  background:var(--panel); border:1px solid var(--border); text-align:center;
+  box-shadow:0 30px 70px rgba(8,12,20,.34);
+  animation:splashPop .34s cubic-bezier(.2,.9,.25,1) both;
+}
+.is-badge{
+  width:52px; height:52px; margin:0 auto 14px; border-radius:16px;
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; background:var(--primary);
+  box-shadow:0 10px 24px rgba(240,80,47,.28);
+}
+.is-badge svg{ width:24px; height:24px; }
+/* 下载/安装中：图标轻轻上下浮动，表示"还在动，别以为卡死了" */
+.is-badge.closing svg,.is-badge.installing svg{ animation:isBob 1.4s ease-in-out infinite; }
+.is-badge.done{ background:#22c55e; box-shadow:0 10px 24px rgba(34,197,94,.28); }
+.is-badge.timeout{ background:#f59e0b; box-shadow:0 10px 24px rgba(245,158,11,.28); }
+@keyframes isBob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(3px); } }
+.is-title{ margin:0; font-size:16px; font-weight:700; color:var(--text); }
+.is-sub{ margin:6px 0 0; font-size:12.5px; line-height:1.6; color:var(--muted); }
+.is-steps{
+  list-style:none; margin:16px 0 0; padding:0; text-align:left;
+  border:1px solid var(--border); border-radius:12px; overflow:hidden;
+}
+.is-steps li{
+  display:flex; align-items:center; gap:9px; padding:9px 12px;
+  font-size:12.5px; color:var(--muted); background:rgba(15,23,42,.02);
+}
+.is-steps li + li{ border-top:1px solid var(--border); }
+.is-dot{ width:8px; height:8px; border-radius:50%; flex:none; background:var(--border); }
+.is-steps li.run{ color:var(--text); font-weight:600; }
+.is-steps li.run .is-dot{ background:var(--primary); box-shadow:0 0 0 4px rgba(240,80,47,.16); animation:isPulse 1.3s ease-in-out infinite; }
+.is-steps li.done{ color:var(--text); }
+.is-steps li.done .is-dot{ background:#22c55e; }
+.is-steps li.fail .is-dot{ background:#f59e0b; }
+@keyframes isPulse{ 0%,100%{ box-shadow:0 0 0 3px rgba(240,80,47,.14); } 50%{ box-shadow:0 0 0 6px rgba(240,80,47,.05); } }
+.is-bar{ margin-top:16px; height:6px; border-radius:99px; background:var(--border); overflow:hidden; }
+.is-bar i{ display:block; height:100%; border-radius:99px; background:var(--primary); transition:width .45s ease; }
+.is-badge.done ~ .is-title ~ .is-steps ~ .is-bar i{ background:#22c55e; }
+.is-pct{
+  margin-top:6px; font-size:11.5px; color:var(--muted);
+  font-variant-numeric:tabular-nums; letter-spacing:.03em;
+}
+.is-acts{ display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap; }
+.is-note{ margin:14px 0 0; font-size:11px; line-height:1.6; color:var(--muted); }

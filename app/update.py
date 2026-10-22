@@ -638,7 +638,10 @@ def install():
             raise UpdateError(f"启动安装器失败：{e}", 500)
 
     _delayed_exit(1.2)
-    return {"ok": True, "willExit": True}
+    # version 给前端用：它要在遮罩上写清「正在安装 vX」，并在新进程起来后
+    # 拿本地版本和目标版本比对（见 static/js/app.js 的 _updatedNote）。
+    return {"ok": True, "willExit": True,
+            "version": cache.get("latest") or "", "delay": delay}
 
 
 def reveal_download():

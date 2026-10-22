@@ -8,9 +8,28 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261022i" />
+  <link rel="stylesheet" href="/css/style.css?v=20261022l" />
+  <!-- 主题必须在首帧之前定下来：等 mounted() 再设 data-theme，深色模式用户会先看到
+       一屏白底的开屏动画（这段内联脚本是唯一能在 CSS 应用前改根属性的地方）。 -->
+  <script>try{if(localStorage.getItem('fm-theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
 </head>
 <body>
+  <!-- 开屏动画：纯静态层，先于 Vue 绘制，避免首屏白闪；
+       由 app.js 的 splashReady() 在首屏数据到位后淡出（并有 2.6s 兜底） -->
+  <div id="splash" class="splash">
+    <div class="splash-inner">
+      <div class="splash-mark">
+        <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+          <path d="M24 5.5c-6.9 0-12.5 5.5-12.5 12.4 0 8.7 12.5 21.1 12.5 21.1s12.5-12.4 12.5-21.1C36.5 11 30.9 5.5 24 5.5z" fill="currentColor"/>
+          <circle cx="24" cy="17.6" r="4.7" fill="#fff"/>
+        </svg>
+      </div>
+      <div class="splash-name">美食地图</div>
+      <div class="splash-sub" id="splashSub">正在启动…</div>
+      <div class="splash-bar"><i></i></div>
+    </div>
+  </div>
+
   <!-- 地图：独立于 Vue 管控，避免重渲染破坏地图实例 -->
   <main id="map" class="map"></main>
 
@@ -91,6 +110,42 @@
 
     <!-- 不再用全屏遮罩：清单要与地图并存，遮罩会挡住地图拖动/缩放。
          关闭清单靠右上角 ✕ 或 Esc；点地图空白只关闭详情。 -->
+
+    <!-- ===== 安装新版本：盖住整个界面 =====
+         旧进程马上要退出，留着原来的界面只会变成「点什么都没反应」的半死状态，
+         所以这里换成一张明确的进度卡：关掉应用 → 安装 → 重新启动。 -->
+    <transition name="fade">
+      <div v-if="installOpen" class="install-screen" role="alertdialog" aria-live="assertive" aria-label="正在安装新版本">
+        <div class="is-card">
+          <div class="is-badge" :class="installPhase">
+            <svg v-if="installPhase!=='done'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg>
+          </div>
+          <h2 class="is-title">{{ installTitle }}</h2>
+          <p class="is-sub">{{ installSub }}</p>
+
+          <ol class="is-steps">
+            <li v-for="s in installSteps" :key="s.k" :class="s.state">
+              <i class="is-dot"></i><span>{{ s.label }}</span>
+            </li>
+          </ol>
+
+          <div class="is-bar"><i :style="{width: installPercent+'%'}"></i></div>
+          <div class="is-pct">{{ Math.round(installPercent) }}%</div>
+
+          <div class="is-acts" v-if="installPhase==='done'||installPhase==='timeout'">
+            <button class="btn-primary" v-if="installPhase==='done'" @click="reloadApp">立即打开</button>
+            <template v-else>
+              <button class="btn-ghost" v-if="!installDead" @click="revealDownload">打开安装包位置</button>
+              <button class="btn-ghost" v-if="!installDead" @click="closeInstall">返回应用</button>
+              <button class="btn-ghost" @click="reloadApp">重新打开</button>
+            </template>
+          </div>
+
+          <p class="is-note">安装期间请不要关闭这个窗口，装完会自动重新打开；<b>data 目录不会被删除</b>。</p>
+        </div>
+      </div>
+    </transition>
 
     <!-- ===== 清单抽屉（列表 + 筛选合为一体） ===== -->
     <transition name="drawer">
@@ -785,6 +840,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261022i"></script>
+  <script src="/js/app.js?v=20261022l"></script>
 </body>
 </html>

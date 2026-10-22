@@ -204,6 +204,10 @@ Safety rules built in:
 
 A **Cancel download** button appears next to the main one while a download is running: the state flips to "cancelling" immediately, the connection is dropped, the partial `.part` file is deleted, and it ends as "cancelled" — never as a failure, and no half installer is left behind. You can restart the download at any time afterwards (no resume; it starts over). Installing is blocked while a download is in flight, so you can never install a partial package or silently reinstall a stale same-named exe.
 
+Pressing **Install and restart now** replaces the whole interface with an install card that walks three steps: **close this version → install the new one → restart**. The bar only jumps at two points it can actually know (the install request went out, and the new version answered again); in between it eases forward, because the silent installer exposes no real percentage and a fake precise number would just sit at 99%. When the new version comes up the page reloads itself; if nothing appears within 2.5 minutes the card turns amber and offers *Open installer folder* / *Reload*.
+
+Every launch starts with a ~1 second splash (logo, name, thin progress bar). On the first launch after an update the splash reads **"Updated to vX"** with a full green bar and a matching toast — without it there is no way to tell whether the update actually landed.
+
 **Portable / source build** — auto-install is disabled on purpose: running `setup.exe` there would install a **second copy** under `%LOCALAPPDATA%` instead of upgrading the one you are using. You get *Go to release page* instead; unzip over `FoodieTrail.exe` and `_internal\`, and never overwrite `data\`.
 
 ---
