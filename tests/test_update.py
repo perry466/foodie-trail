@@ -180,7 +180,9 @@ def test_safe_download_path_rejects_traversal():
 
 def test_safe_download_path_accepts_generated_name():
     p = upd._safe_download_path("FoodieTrail-9.9.9-windows-x64-setup.exe")
-    assert os.path.dirname(p) == os.path.abspath(upd.DOWNLOADS_DIR)
+    # _safe_download_path 返回 realpath：会解析 8.3 短名（RUNNER~1→runneradmin）
+    # 与 junction/symlink，所以期望值也必须是 realpath，abspath 会在 CI 上必挂
+    assert os.path.dirname(p) == os.path.realpath(upd.DOWNLOADS_DIR)
 
 
 def test_install_spawns_cmd_chain_as_plain_string(monkeypatch, tmp_path):
