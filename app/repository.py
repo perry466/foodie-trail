@@ -216,15 +216,25 @@ class SQLiteRepository(RecordRepository):
             sql += " AND checkin_status = ?"
             args.append(filters["checkinStatus"])
         if filters.get("tags"):
-            # 默认 AND（都要有）；tagsAny=true 时改成 OR（有任一即可）
-            likes = ['%"' + escape_like(t) + '"%' for t in filters["tags"]]
+            # 用 json_each 对解析后的标签做**精确等值**匹配。
+            # 不能用 LIKE 粗筛：库里存的是 JSON 串，标签含 " 或 \ 时会存成 \" 和 \\，
+            # 拿原文去 LIKE 永远对不上（漏报）；% _ 也只是靠 escape_like 兜住。
+            # json_each 按值比较，任何字符都精确；单机量级下成本可忽略。
+            # json_valid 守卫：tags 列一旦有脏数据（''/手工改库/旧版异常写入），
+            # 裸 json_each 会抛 malformed JSON 让整个列表接口 500——坏一行不能拖垮全部。
+            tag_exists = (
+                "EXISTS (SELECT 1 FROM json_each("
+                "CASE WHEN json_valid(records.tags) THEN "
+                "CASE WHEN json_type(records.tags)='array' THEN records.tags ELSE '[]' END "
+                "ELSE '[]' END) WHERE json_each.value = ?)"
+            )
             if filters.get("tagsAny"):
-                sql += " AND (" + " OR ".join("tags LIKE ? ESCAPE '\\'" for _ in likes) + ")"
-                args += likes
+                sql += " AND (" + " OR ".join(tag_exists for _ in filters["tags"]) + ")"
+                args += list(filters["tags"])
             else:
-                for kw in likes:
-                    sql += " AND tags LIKE ? ESCAPE '\\'"
-                    args.append(kw)
+                for t in filters["tags"]:
+                    sql += " AND " + tag_exists
+                    args.append(t)
         if filters.get("bounds"):
             b = filters["bounds"]
             sql += " AND lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?"
@@ -242,17 +252,6 @@ class SQLiteRepository(RecordRepository):
         with get_conn() as conn:
             rows = conn.execute(sql, args).fetchall()
         recs = [_row_to_record(r) for r in rows]
-        # LIKE 只能做子串近似：标签含双引号/反斜杠时，JSON 存储形态（\"）与 LIKE
-        # 模式（"）对不上，会漏匹配——SQL 命中后在 Python 侧按解析后的 tags 精确复核。
-        # LIKE 粗筛是超集，这里只会剔除误报、不会漏；带 LIMIT 的分页可能因此少给，
-        # 但正确性优先（单机量级下 json 解析成本可忽略）。
-        want = filters.get("tags")
-        if want:
-            ws = set(want)
-            if filters.get("tagsAny"):
-                recs = [r for r in recs if ws & set(r.get("tags") or [])]
-            else:
-                recs = [r for r in recs if ws <= set(r.get("tags") or [])]
         return recs
 
     def get(self, rid: str, conn=None):
@@ -519,7 +518,9 @@ class SQLiteRepository(RecordRepository):
             if not (r["note"] or "").strip():
                 q_no_note += 1
 
-            if r["lat"] and r["lng"]:
+            # 用 is not None 判断：0 是合法坐标（应用允许保存赤道/本初子午线上的点），
+            # 按 falsy 排除会漏掉 (0, x)、(x, 0) 的记录（2026-10-23 复审）
+            if r["lat"] is not None and r["lng"] is not None:
                 regions.add((round(r["lat"], 1), round(r["lng"], 1)))
 
             ts = _epoch_ms(r["created_at"])

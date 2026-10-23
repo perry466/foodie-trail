@@ -849,3 +849,26 @@ def test_install_rehashes_package_and_refuses_mismatch(monkeypatch, tmp_path):
         upd.install()
     assert "校验失败" in e.value.message
     assert not target.exists()                 # 被换过的包必须删掉
+
+
+def test_install_refuses_cache_without_sha256(monkeypatch, tmp_path):
+    """缓存里缺 sha256 时直接 409，与 canAutoInstall 的口径一致（2026-10-23 复审）。
+
+    没有校验值就没有完整性锚点，哪怕文件碰巧完好也不能装。
+    """
+    target = tmp_path / "FoodieTrail-9.9.9-windows-x64-setup.exe"
+    target.write_bytes(b"x" * 20)
+    rel = _release()
+    rel["setup"]["sha256"] = ""                # 缺校验值
+    monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
+    monkeypatch.setattr(upd, "_read_cache", lambda: rel)
+    monkeypatch.setattr(upd, "_safe_download_path", lambda name: str(target))
+    monkeypatch.setattr(upd, "_delayed_exit", lambda s: None)
+    monkeypatch.setattr(upd.subprocess, "Popen",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该启动安装器")))
+
+    with pytest.raises(upd.UpdateError) as e:
+        upd.install()
+    assert e.value.status == 409
+    assert "校验值" in e.value.message
+    assert target.exists()                     # 文件没被动过，留给用户手动处置

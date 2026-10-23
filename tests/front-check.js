@@ -314,6 +314,40 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   app.updateInfo = { canAutoInstall: true, downloadUrl: 'https://example.invalid/s.exe' };
   check('可自动安装时不显示兜底提示', hint() === '');
 
+  // ---- 列表竞态：先发出的请求后返回，不能把新结果盖回去（_recSeq） ----
+  app.loadRecords = ctx.__App.methods.loadRecords;   // 恢复真实实现（第 73 行曾桩掉）
+  app.reloadMap = async () => {};
+  app.viewBounds = null;
+  app.selectedIds = [];
+  const pendingReqs = [];
+  ctx.__API.get = (url) => new Promise((res) => pendingReqs.push({ url, res }));
+  const pOld = app.loadRecords();                    // 旧请求（后返回）
+  const pNew = app.loadRecords();                    // 新请求（先返回）
+  pendingReqs[1].res([{ id: 'new', name: '新结果', draft: false, tags: [] }]);
+  await pNew; await tick();
+  check('新请求结果正常写入', app.records.length === 1 && app.records[0].id === 'new',
+    JSON.stringify(app.records.map((r) => r.id)));
+  pendingReqs[0].res(ALL);                           // 旧响应此刻才到
+  await pOld; await tick();
+  check('旧响应不覆盖新结果', app.records.length === 1 && app.records[0].id === 'new',
+    JSON.stringify(app.records.map((r) => r.id)));
+  ctx.__API.get = async () => ALL;   // 恢复：API.get 返回已解析的数组，不是 {ok,json}
+
+  // ---- 忽略此版本：启动横幅与手动检查都不再弹已忽略的版本 ----
+  app._lastCheckAt = 0; app.updateBusy = false; app.updateBanner = false;
+  store['fm-skip-version'] = '9.9.9';
+  ctx.__API.get = async () => ({ ok: true, hasUpdate: true, latest: '9.9.9', current: '1.0.0' });
+  await app.checkUpdate(true);
+  check('已忽略版本的检查不弹横幅', app.updateBanner === false);
+  ctx.__API.get = async () => ({ ok: true, hasUpdate: true, latest: '9.9.10', current: '1.0.0' });
+  app._lastCheckAt = 0;   // 绕开手动检查的 20 秒防抖（测的是横幅逻辑，不是防抖）
+  await app.checkUpdate(true);
+  check('更新的版本仍弹横幅', app.updateBanner === true);
+  app.updateInfo = { latest: '9.9.10' };
+  app.dismissUpdate();
+  check('点 ✕ 记录忽略版本且收起横幅', store['fm-skip-version'] === '9.9.10' && app.updateBanner === false,
+    store['fm-skip-version']);
+
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));
   if (fail.length) {

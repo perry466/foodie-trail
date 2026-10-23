@@ -704,16 +704,26 @@ def _download_error_msg(e):
 
 # ---------- 安装 ----------
 def _safe_download_path(name):
-    """文件名只允许后端生成的那一种，且必须落在 downloads 目录内。"""
-    # 分隔符单独判一次：Windows 下 basename 会吃掉 `..\\`，但换到 POSIX 跑测试时
-    # 反斜杠不算分隔符，只靠 commonpath 会让 `..\\evil.exe` 混过去。
+    """文件名只允许后端生成的那一种，且必须落在 downloads 目录内。
+
+    用 realpath 而不是 abspath：junction/符号链接下只有 realpath 能揭示真实落点
+    （安装前有 sha256 兜底，这里是纵深防御）。
+    """
     if (not name or name != os.path.basename(name)
             or "/" in name or "\\" in name
             or not name.lower().endswith(".exe")):
+        # 分隔符单独判一次：Windows 下 basename 会吃掉 `..\\`，但换到 POSIX 跑测试时
+        # 反斜杠不算分隔符，只靠 commonpath 会让 `..\\evil.exe` 混过去。
         raise UpdateError("安装包文件名非法", 400)
-    target = os.path.abspath(os.path.join(DOWNLOADS_DIR, name))
-    root = os.path.abspath(DOWNLOADS_DIR)
-    if os.path.commonpath([target, root]) != root:
+    target = os.path.realpath(os.path.join(DOWNLOADS_DIR, name))
+    root = os.path.realpath(DOWNLOADS_DIR)
+    try:
+        inside = os.path.commonpath([target, root]) == root
+    except ValueError:
+        # 跨盘 junction/符号链接时 commonpath 直接抛 ValueError（Windows 混合盘符），
+        # 不能让它变成 500——保守当作越界拒绝（2026-10-23 复审）。
+        inside = False
+    if not inside:
         raise UpdateError("安装包路径越界", 400)
     return target
 
@@ -737,21 +747,23 @@ def install():
     size = os.path.getsize(target)
     if setup.get("size") and size != int(setup["size"]):
         raise UpdateError("安装包大小不符，请重新下载", 400)
-    # 下载线程校验过 sha256，但「下载完成」到「用户点安装」之间可能隔了几小时：
+    # sha256 是自动安装的完整性锚点，缺了就拒绝（与 canAutoInstall 的口径一致）。
+    # 下载线程验过一次，但「下载完成」到「用户点安装」之间可能隔了几小时：
     # 杀软隔离后还原、被人为替换都可能让磁盘上的文件与当时不同。安装是最后一道
     # 防线，重算一次哈希；不一致就删掉文件让用户重下，绝不静默装一个被换过的包。
     expect_sha = str(setup.get("sha256") or "").lower()
-    if expect_sha:
-        h = hashlib.sha256()
-        with open(target, "rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
-        if h.hexdigest() != expect_sha:
-            try:
-                os.remove(target)
-            except OSError:
-                pass
-            raise UpdateError("安装包校验失败（与下载时不一致），已删除，请重新下载", 400)
+    if not expect_sha:
+        raise UpdateError("缓存里没有安装包校验值，请重新检查更新后再安装", 409)
+    h = hashlib.sha256()
+    with open(target, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    if h.hexdigest() != expect_sha:
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        raise UpdateError("安装包校验失败（与下载时不一致），已删除，请重新下载", 400)
 
     exe = os.path.abspath(sys.executable)
     # 用 cmd 起一个延迟链，而不是直接 Popen 安装器：

@@ -11,7 +11,7 @@ import uuid
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -282,7 +282,8 @@ def _amap_web_key() -> Optional[str]:
 def list_records(
     keyword: str = "", ratingMin: int = None, ratingMax: int = None,
     avgPriceMin: int = None, avgPriceMax: int = None,
-    checkinStatus: str = "", tags: str = "", tagsAny: bool = False, includeDrafts: bool = False,
+    checkinStatus: str = "", tags: list[str] = Query(default=[]),
+    tagsAny: bool = False, includeDrafts: bool = False,
     draftsOnly: bool = False,
     swLng: float = None, swLat: float = None, neLng: float = None, neLat: float = None,
     sort: str = "updatedAt:desc", limit: int = 0, offset: int = 0,
@@ -293,8 +294,10 @@ def list_records(
         "checkinStatus": checkinStatus, "includeDrafts": includeDrafts,
         "draftsOnly": draftsOnly, "tagsAny": tagsAny,
     }
+    # tags 收重复查询参数（?tags=a&tags=b），**不按逗号拆**：
+    # 标签本身可以含逗号（如「川菜,辣」），拆了就永远筛不到（2026-10-23 复审）。
     if tags:
-        filters["tags"] = [t for t in tags.split(",") if t]
+        filters["tags"] = [t for t in tags if t]
     if None not in (swLng, swLat, neLng, neLat):
         filters["bounds"] = {"swLng": swLng, "swLat": swLat, "neLng": neLng, "neLat": neLat}
     return repo.list(filters, sort, limit, offset)
@@ -376,7 +379,14 @@ def delete_record(rid: str):
 
 
 async def _read_limited(file: UploadFile, limit: int) -> bytes:
-    """分块读取上传内容，超过上限立即 413，避免整块读进内存后被撑爆。"""
+    """分块读取上传内容，超过上限立即 413，防止无上限的请求把内存读爆。
+
+    注意：这只防「无限读」，不防「整文件驻留」——上限内的文件仍会完整
+    存进内存，且 json.loads 解析时原始字节与 Python 对象会同时存在，
+    峰值可达文件的数倍。256MB 上限是按「mode=full 备份内嵌 base64 照片」
+    的合法体积定的（单机单人使用，峰值内存高一点可接受）；
+    若将来要支持更大的库，应改流式解析而不是继续抬高这个数。
+    """
     chunks, total = [], 0
     while True:
         chunk = await file.read(1024 * 1024)
@@ -851,7 +861,8 @@ def export_records(
     mode: str = "full",
     keyword: str = "", ratingMin: int = None, ratingMax: int = None,
     avgPriceMin: int = None, avgPriceMax: int = None,
-    checkinStatus: str = "", tags: str = "", includeDrafts: bool = True,
+    checkinStatus: str = "", tags: list[str] = Query(default=[]),
+    includeDrafts: bool = True,
     sort: str = "updatedAt:desc",
 ):
     """导出备份。includeDrafts 默认为 True：草稿也是用户数据，备份不应静默遗漏。"""
@@ -860,8 +871,9 @@ def export_records(
         "avgPriceMin": avgPriceMin, "avgPriceMax": avgPriceMax,
         "checkinStatus": checkinStatus, "includeDrafts": includeDrafts,
     }
+    # 与 /api/records 同口径：tags 收重复参数，不按逗号拆
     if tags:
-        filters["tags"] = [t for t in tags.split(",") if t]
+        filters["tags"] = [t for t in tags if t]
     # 只取元数据列表（不读照片），条数用于文件名；正文交给流式生成器
     # sort 由数据层 normalize_sort 白名单化，用户原文不会进 SQL
     records = repo.list(filters, sort)

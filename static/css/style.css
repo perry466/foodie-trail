@@ -1122,6 +1122,15 @@ body.fm-list-open .map-banner{ left:calc(50% + 214px); max-width:min(480px,calc(
 @keyframes splashRise{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:none; } }
 @keyframes splashSlide{ 0%{ transform:translateX(-110%); } 55%{ transform:translateX(150%); } 100%{ transform:translateX(300%); } }
 
+/* 动效敏感用户（系统开了「减弱动态效果」）：只保留淡入淡出这类必要的状态变化，
+   去掉弹跳、上浮、滑动的位移动画。淡出仍瞬时生效（transition:none 时属性直接到终值），
+   不会卡住开屏层。 */
+@media (prefers-reduced-motion: reduce){
+  .splash{ transition:opacity .2s linear, visibility .2s linear; }
+  .splash-mark, .splash-name, .splash-sub, .splash-bar, .splash-bar i{ animation:none !important; }
+  .splash-inner{ transition:none; }
+}
+
 /* ============================================================
    安装新版本遮罩（v2.0）
    点「立即安装并重启」后，旧进程 1.2 秒内就会退出，之后整个页面再也

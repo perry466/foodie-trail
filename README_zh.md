@@ -288,8 +288,8 @@ data/
 ## 🧪 六、测试与数据体检
 
 ```bash
-python -m pytest tests -q      # 后端 219 例
-node tests/front-check.js      # 前端 51 项断言（Node 18+）
+python -m pytest tests -q      # 后端 231 例
+node tests/front-check.js      # 前端 56 项断言（Node 18+）
 tests\run-tests.bat            # 两条一起跑，退出码 0 / 1 / 2（2 = 缺 Node）
 ```
 

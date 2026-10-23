@@ -64,6 +64,15 @@ jobs:
       - name: Run tests (backend)
         run: python -m pytest tests -q
 
+      # tag 可能打在未经前端检查的提交上（tests.yml 只覆盖 main/PR），
+      # 发版前补一道：模板/逻辑改坏时在这里拦住，而不是发出去才发现。
+      # Node 版本与 tests.yml 固定为 20：windows-latest 自带的版本不受控。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run tests (frontend)
+        run: node tests/front-check.js
+
       - name: Build executable (PyInstaller)
         run: pyinstaller FoodieTrail.spec --noconfirm
 

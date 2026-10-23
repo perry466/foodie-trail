@@ -786,7 +786,8 @@ const App = {
       if(f.ratingMin) q+=`&ratingMin=${f.ratingMin}`;
       if(f.ratingMax) q+=`&ratingMax=${f.ratingMax}`;
       if(f.tags.length){
-        q+=`&tags=${encodeURIComponent(f.tags.join(','))}`;
+        // 重复参数（?tags=a&tags=b），不按逗号拼——标签本身可以含逗号
+        q+=f.tags.map(t=>`&tags=${encodeURIComponent(t)}`).join('');
         if(f.tagsMode==='any') q+='&tagsAny=1';
       }
       if(f.priceMin!=null) q+=`&avgPriceMin=${f.priceMin}`;
@@ -1077,7 +1078,7 @@ const App = {
       if(f.ratingMin) q.set('rating',String(f.ratingMin));
       if(f.ratingMax) q.set('ratingMax',String(f.ratingMax));
       if(f.priceMin!=null||f.priceMax!=null) q.set('price',`${f.priceMin==null?'':f.priceMin}-${f.priceMax==null?'':f.priceMax}`);
-      if(f.tags.length) q.set('tags',f.tags.join(','));
+      f.tags.forEach(t=>q.append('tags',t));   // 重复参数，标签含逗号也不拆
       if(f.tags.length>1 && f.tagsMode==='any') q.set('tagsMode','any');
       if(f.drafts!=='all') q.set('drafts',f.drafts);
       if(f.viewOnly) q.set('viewOnly','1');
@@ -1101,8 +1102,8 @@ const App = {
         if(parts[0]) this.filters.priceMin=parseInt(parts[0],10);
         if(parts[1]) this.filters.priceMax=parseInt(parts[1],10);
       }
-      const tg=q.get('tags');
-      if(tg) this.filters.tags=tg.split(',').filter(Boolean);
+      const tg=q.getAll('tags');               // 新格式是重复参数；旧分享链接（tags=a,b）不再按逗号拆
+      if(tg.length) this.filters.tags=tg.filter(Boolean);
       if(q.get('tagsMode')==='any') this.filters.tagsMode='any';
       const df=q.get('drafts');
       if(df==='hide'||df==='only') this.filters.drafts=df;

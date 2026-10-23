@@ -75,7 +75,8 @@ def normalize_id(value):
 def normalize_tags(value) -> list:
     """把任意输入收敛成 list[str]：字符串视为单个标签，其它类型丢弃。
 
-    - 去空白、去空串、去重（保序）、截断超长标签、限制数量
+    - 去空白、去空串、去重（保序）、限制数量
+    - 超长标签直接丢弃（不是截断：截断会产生一个用户没写过的假标签）
     - dict / int / None 等一律返回 []
     """
     if isinstance(value, str):
@@ -159,7 +160,8 @@ def clamp_hours(value):
 
 
 def normalize_price(value):
-    """人均价格：接受数字字符串，其余返回 None；越界按边界截断。"""
+    """人均价格：接受数字字符串，其余返回 None；越界同样返回 None（不是截断到边界——
+    截断会把 99999 变成一个用户没标过的假价格）。"""
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, str):
