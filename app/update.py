@@ -34,6 +34,10 @@ API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 # 网页版「最新发布」：不消耗 API 额度，302 的 Location 里带 tag。
 # api.github.com 的匿名额度只有 60 次/小时且按出口 IP 计，共享出口很容易耗尽。
 HTML_LATEST = f"https://github.com/{REPO}/releases/latest"
+# latest.json：CI 发版时随 Release 一起上传的元数据（版本/资产地址/size/sha256/说明）。
+# `releases/latest/download/<name>` 由 GitHub 重定向到最新 Release 的同名资产，
+# 走普通下载域名，**不占 API 额度**——这是「额度耗尽也能自动安装」的关键。
+LATEST_JSON = f"https://github.com/{REPO}/releases/latest/download/latest.json"
 _TAG_IN_URL = re.compile(r"/releases/tag/v?(\d+\.\d+\.\d+)")
 HTML_RELEASES = f"https://github.com/{REPO}/releases"
 
@@ -283,7 +287,19 @@ def _fetch_latest():
         except Exception as e:                # 超时/连接失败：换下一条路
             last_err = UpdateError(f"{type(e).__name__}: {e}", 502)
     # API 的所有路都失败（最常见：匿名额度耗尽，60 次/小时按出口 IP 计）。
-    # 退回不占额度的网页版，至少能正确回答「有没有新版」，而不是让旧缓存冒充结论。
+    # 第二级：latest.json——CI 随 Release 上传的元数据，走下载域名、不占 API 额度，
+    # 信息完整（版本 + 资产 + sha256），额度耗尽时也能自动安装。
+    try:
+        return _fetch_latest_json()
+    except UpdateError as e:
+        # 保留 API 那次的错误做最终报告：它的消息带「额度/等多久」的指导，
+        # latest.json 的 403 语境更差。404 除外——那说明资产缺失，不是网络问题，
+        # 不该盖住真正的网络原因，但也不该反过来盖住 API 的原因。
+        if last_err is None and getattr(e, "status", None) != 404:
+            last_err = e
+    except Exception:
+        pass
+    # 第三级：网页 302 拿版本号。只能回答「有没有新版」，拿不到 sha256，标 degraded。
     try:
         return _fetch_latest_html()
     except Exception:
@@ -354,6 +370,62 @@ def _fetch_latest_html():
                 "degraded": True,
             }
         except UpdateError as e:
+            last_err = e
+        except Exception as e:
+            last_err = UpdateError(f"{type(e).__name__}: {e}", 502)
+    raise last_err or UpdateError("无法连接 GitHub", 502)
+
+
+def _parse_latest_json(d):
+    """把 latest.json 转成与 API 结果同构的 dict，检查/下载/安装的下游不用改。"""
+    version = str(d.get("version") or "")
+    if parse_version(version) is None:
+        raise UpdateError("latest.json 里的版本号无法识别", 502)
+    setup = d.get("setup") or {}
+    zip_ = d.get("zip") or {}
+    out = {
+        "checkedAt": int(time.time()),
+        "latest": version,
+        "tag": "v" + version,
+        "notes": str(d.get("notes") or ""),
+        "publishedAt": str(d.get("publishedAt") or ""),
+        "htmlUrl": f"{HTML_RELEASES}/tag/v{version}",
+    }
+    # 只有 sha256 齐备的资产才放进结果——没有校验值就不能自动安装，宁可让用户手动下。
+    for key, a in (("setup", setup), ("zip", zip_)):
+        url, sha = str(a.get("url") or ""), str(a.get("sha256") or "").lower()
+        if url and re.fullmatch(r"[0-9a-f]{64}", sha):
+            out[key] = {
+                "name": str(a.get("name") or ""),
+                "size": int(a.get("size") or 0),
+                "url": url,
+                "sha256": sha,
+            }
+        else:
+            out[key] = None
+    return out
+
+
+def _fetch_latest_json():
+    """从 Release 资产里读 latest.json——不占 API 额度的完整数据源。
+
+    旧版本（< 2.0.4）的 Release 没有这个资产，GitHub 会 404；那种情况抛
+    UpdateError(404)，由调用方继续走网页兜底。这与「网络故障」不同：404 说明
+    服务与网络都是通的，只是这份 Release 太老。
+    """
+    last_err = None
+    for cand in _client_candidates():
+        try:
+            with _client(CHECK_TIMEOUT, cand=cand) as c:
+                r = c.get(LATEST_JSON, headers={"User-Agent": f"FoodieTrail/{VERSION}"})
+            if r.status_code == 404:
+                raise UpdateError("latest.json 不存在（该 Release 早于 2.0.4）", 404)
+            if r.status_code != 200:
+                raise UpdateError(f"latest.json 拉取失败：HTTP {r.status_code}", 502)
+            return _parse_latest_json(r.json())
+        except UpdateError as e:
+            if getattr(e, "status", None) == 404:
+                raise                        # 资产缺失不是网络问题，换网络路径也没用
             last_err = e
         except Exception as e:
             last_err = UpdateError(f"{type(e).__name__}: {e}", 502)

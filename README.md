@@ -290,8 +290,8 @@ Drafts are included by default, and the current filters still apply — clear th
 ## 🧪 6. Tests and Data Health
 
 ```bash
-python -m pytest tests -q      # 211 backend cases
-node tests/front-check.js      # 48 front-end assertions (Node 18+)
+python -m pytest tests -q      # 216 backend cases
+node tests/front-check.js      # 51 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
 

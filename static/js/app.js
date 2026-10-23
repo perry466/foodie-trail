@@ -540,12 +540,17 @@ const App = {
     updateNotes(){
       return (this.updateInfo.notes||'').replace(/\*\*/g,'').trim();
     },
-    /* 不能自动安装时，按形态给对应的操作——源码版没 exe 可替换，让它去"替换 _internal"是错的 */
+    /* 不能自动安装时，按「用户此刻真的能点哪个按钮」给指令。
+       源码版没 exe 可替换，让它去"替换 _internal"是错的；
+       额度耗尽的降级结果里没有资产地址，「复制下载链接」按钮根本不渲染，
+       此时再让用户点它就是死路，只能引导去 Release 页面。 */
     updateModeHint(){
       if(this.updateInfo && this.updateInfo.canAutoInstall) return '';
       if(this.appMode==='source') return '源码版：git pull 后重启服务即可。';
       if(this.appMode==='portable') return '绿色版：下载后替换 exe 与 _internal，别覆盖 data。';
-      return '拿不到安装包信息，点「复制下载链接」用浏览器下载后覆盖安装。';
+      if(!this.updateInfo || !this.updateInfo.downloadUrl)
+        return '去 Release 页面下载安装包，覆盖安装即可。';
+      return '点「复制下载链接」用浏览器下载后覆盖安装。';
     },
     /* ---------- 安装遮罩的文案与步骤（模板直接取用，别在模板里写逻辑） ---------- */
     installTitle(){
@@ -1222,7 +1227,7 @@ const App = {
           this.updateMsg=(r&&r.reason)||'暂时无法检查更新，请稍后再试';
         }else if(r.hasUpdate){
           let m = r.degraded
-            ? ('发现新版本 v'+r.latest+'，但 GitHub 接口受限，只能手动下载')
+            ? ('发现新版本 v'+r.latest+'，GitHub 接口额度已用完，只能手动下载')
             : ('发现新版本 v'+r.latest);
           this.updateMsg=m+this._cacheNote(r);
           this._showUpdateBanner();

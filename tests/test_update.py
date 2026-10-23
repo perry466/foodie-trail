@@ -740,3 +740,85 @@ def test_degraded_result_is_not_written_to_cache(monkeypatch):
     assert r["canAutoInstall"] is False           # 没有 sha256，绝不允许自动装
     assert r["downloadUrl"] == ""
     assert writes == []                           # 不落盘
+
+
+# ---------- latest.json：不占 API 额度的完整数据源 ----------
+# 背景：额度耗尽时应用退到网页 302，只能知道「有新版」却拿不到资产与 sha256，
+# 无法自动安装——用户被迫手动下载。CI 现在把版本/资产/sha256 写进 latest.json
+# 随 Release 上传，应用从 `releases/latest/download/latest.json` 读，走下载域名。
+
+_LATEST_JSON = {
+    "version": "9.9.9",
+    "publishedAt": "2026-10-23T03:19:04Z",
+    "setup": {"name": "FoodieTrail-9.9.9-windows-x64-setup.exe",
+              "url": "https://example.invalid/s.exe", "size": 20, "sha256": "b" * 64},
+    "zip": {"name": "FoodieTrail-9.9.9-windows-x64.zip",
+            "url": "https://example.invalid/z.zip", "size": 10, "sha256": "a" * 64},
+    "notes": "## 本版本变更",
+}
+
+
+def test_parse_latest_json_maps_to_release_shape():
+    """latest.json 必须转成与 API 结果同构的 dict，下游不用改。"""
+    r = upd._parse_latest_json(_LATEST_JSON)
+    assert r["latest"] == "9.9.9" and r["tag"] == "v9.9.9"
+    assert r["setup"]["sha256"] == "b" * 64 and r["zip"]["size"] == 10
+    assert r["checkedAt"] > 0 and "degraded" not in r
+
+
+def test_parse_latest_json_without_sha256_blocks_auto_install(monkeypatch):
+    """缺 sha256 的资产不能进入结果——没有校验值就绝不自动装。"""
+    d = json.loads(json.dumps(_LATEST_JSON))
+    d["setup"]["sha256"] = "not-a-hash"
+    r = upd._parse_latest_json(d)
+    assert r["setup"] is None and r["zip"] is not None
+
+
+def test_api_failure_falls_back_to_latest_json(monkeypatch):
+    """API 挂了 → latest.json 成功：完整信息、能自动装、不是 degraded。"""
+    monkeypatch.setattr(upd, "_client_candidates", lambda: [{"trust_env": False}])
+    monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
+
+    class _JsonResp(_HtmlResp):
+        def json(self):
+            return _LATEST_JSON
+
+    def resp(url):
+        if "api.github.com" in str(url):
+            raise RuntimeError("rate limit exceeded")
+        if url == upd.LATEST_JSON:
+            return _JsonResp(200)
+        raise AssertionError("不应再走网页兜底：" + str(url))
+
+    monkeypatch.setattr(upd, "_client", lambda *a, **k: _FakeClient(resp))
+    d = upd._fetch_latest()
+    assert d["latest"] == "9.9.9" and "degraded" not in d
+    b = upd._build_result(d)
+    assert b["hasUpdate"] is True and b["canAutoInstall"] is True
+
+
+def test_latest_json_404_falls_back_to_html(monkeypatch):
+    """旧 Release 没有 latest.json（404）：不算网络故障，继续网页兜底。"""
+    monkeypatch.setattr(upd, "_client_candidates", lambda: [{"trust_env": False}])
+
+    def resp(url):
+        if "api.github.com" in str(url):
+            raise RuntimeError("rate limit exceeded")
+        if url == upd.LATEST_JSON:
+            return _HtmlResp(404)
+        return _HtmlResp(302, "https://github.com/perry466/foodie-trail/releases/tag/v9.9.9")
+
+    monkeypatch.setattr(upd, "_client", lambda *a, **k: _FakeClient(resp))
+    d = upd._fetch_latest()
+    assert d["latest"] == "9.9.9" and d["degraded"] is True
+
+
+def test_latest_json_success_is_written_to_cache(monkeypatch):
+    """latest.json 信息完整（有 sha256）：可以写缓存，下载安装全链可用。"""
+    _clear_cache()
+    monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
+    monkeypatch.setattr(upd, "_fetch_latest", lambda: upd._parse_latest_json(_LATEST_JSON))
+    r = upd.check(force=True)
+    assert r["canAutoInstall"] is True
+    with open(upd.UPDATE_CACHE_PATH, encoding="utf-8") as f:
+        assert json.load(f)["latest"] == "9.9.9"

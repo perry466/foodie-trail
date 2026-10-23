@@ -301,6 +301,19 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   check('新版本启动显示已更新到 v2.0.0', app._updatedNote() === '已更新到 v2.0.0', app._updatedNote());
   check('更新标记消费后清空', !('fm-updating' in store));
 
+  // ---- 不能自动安装时，提示必须指向「屏幕上真的存在的按钮」 ----
+  // 额度耗尽的降级结果没有资产地址，「复制下载链接」按钮不渲染，
+  // 再让用户去点它就是死路（2026-10-23 用户截图实踩）。
+  app.appMode = 'installer';
+  const hint = () => ctx.__App.computed.updateModeHint.call(app);
+  app.updateInfo = { canAutoInstall: false, downloadUrl: '' };
+  check('降级时提示去 Release 页面，不指向不存在的复制按钮',
+    /Release 页面/.test(hint()) && !/复制下载链接/.test(hint()), hint());
+  app.updateInfo = { canAutoInstall: false, downloadUrl: 'https://example.invalid/s.exe' };
+  check('有下载地址时才提示复制链接', /复制下载链接/.test(hint()), hint());
+  app.updateInfo = { canAutoInstall: true, downloadUrl: 'https://example.invalid/s.exe' };
+  check('可自动安装时不显示兜底提示', hint() === '');
+
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));
   if (fail.length) {
