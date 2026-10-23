@@ -241,7 +241,19 @@ class SQLiteRepository(RecordRepository):
 
         with get_conn() as conn:
             rows = conn.execute(sql, args).fetchall()
-        return [_row_to_record(r) for r in rows]
+        recs = [_row_to_record(r) for r in rows]
+        # LIKE 只能做子串近似：标签含双引号/反斜杠时，JSON 存储形态（\"）与 LIKE
+        # 模式（"）对不上，会漏匹配——SQL 命中后在 Python 侧按解析后的 tags 精确复核。
+        # LIKE 粗筛是超集，这里只会剔除误报、不会漏；带 LIMIT 的分页可能因此少给，
+        # 但正确性优先（单机量级下 json 解析成本可忽略）。
+        want = filters.get("tags")
+        if want:
+            ws = set(want)
+            if filters.get("tagsAny"):
+                recs = [r for r in recs if ws & set(r.get("tags") or [])]
+            else:
+                recs = [r for r in recs if ws <= set(r.get("tags") or [])]
+        return recs
 
     def get(self, rid: str, conn=None):
         # 带照片的详情读取：记录行与照片行用同一条连接，省掉一次建连开销

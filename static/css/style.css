@@ -1083,38 +1083,44 @@ body.fm-list-open .map-banner{ left:calc(50% + 214px); max-width:min(480px,calc(
   position:fixed; inset:0; z-index:4000;
   display:flex; align-items:center; justify-content:center;
   background:radial-gradient(1100px 620px at 50% 18%, #ffffff 0%, var(--bg) 62%, #eceef1 100%);
-  transition:opacity .42s ease, visibility .42s ease;
+  transition:opacity .75s cubic-bezier(.4,0,.2,1), visibility .75s cubic-bezier(.4,0,.2,1);
 }
 [data-theme="dark"] .splash{
   background:radial-gradient(1100px 620px at 50% 18%, #1d2027 0%, #14161a 62%, #101216 100%);
 }
 .splash.out{ opacity:0; visibility:hidden; pointer-events:none; }
-.splash-inner{ display:flex; flex-direction:column; align-items:center; gap:0; }
-.splash-mark{ color:var(--primary); width:56px; height:56px; animation:splashPop .62s cubic-bezier(.2,.9,.25,1) both; }
+/* 退场时内容轻轻上浮，让「让位」是一个动作而不是瞬间消失 */
+.splash-inner{
+  display:flex; flex-direction:column; align-items:center; gap:0;
+  transition:transform .75s cubic-bezier(.4,0,.2,1), opacity .6s ease;
+}
+.splash.out .splash-inner{ transform:translateY(-12px); }
+/* 入场：弹跳感收小、时长放长，像一次深呼吸而不是蹦出来 */
+.splash-mark{ color:var(--primary); width:56px; height:56px; animation:splashPop .95s cubic-bezier(.22,1,.36,1) both; }
 .splash-mark svg{ width:100%; height:100%; display:block; filter:drop-shadow(0 8px 18px rgba(240,80,47,.28)); }
 .splash-name{
-  margin-top:14px; font-size:19px; font-weight:700; letter-spacing:.18em; text-indent:.18em;
-  animation:splashRise .6s .1s cubic-bezier(.2,.9,.25,1) both;
+  margin-top:16px; font-size:19px; font-weight:700; letter-spacing:.18em; text-indent:.18em;
+  animation:splashRise .85s .18s cubic-bezier(.22,1,.36,1) both;
 }
 .splash-sub{
-  margin-top:8px; font-size:12px; color:var(--muted); letter-spacing:.04em;
-  animation:splashRise .6s .18s cubic-bezier(.2,.9,.25,1) both;
+  margin-top:9px; font-size:12px; color:var(--muted); letter-spacing:.04em;
+  animation:splashRise .85s .34s cubic-bezier(.22,1,.36,1) both;
 }
 .splash-bar{
-  position:relative; margin-top:22px; width:150px; height:3px; border-radius:99px;
+  position:relative; margin-top:24px; width:200px; height:2px; border-radius:99px;
   background:var(--border); overflow:hidden;
-  animation:splashRise .6s .24s cubic-bezier(.2,.9,.25,1) both;
+  animation:splashRise .85s .5s cubic-bezier(.22,1,.36,1) both;
 }
 .splash-bar i{
-  position:absolute; inset:0 auto 0 0; width:44%; border-radius:99px; background:var(--primary);
-  animation:splashSlide 1.05s ease-in-out infinite;
+  position:absolute; inset:0 auto 0 0; width:34%; border-radius:99px; background:var(--primary);
+  animation:splashSlide 2.2s cubic-bezier(.45,0,.55,1) infinite;
 }
-/* 刚更新完：进度条走满并变绿，文字换成「已更新到 vX」 */
-.splash.updated .splash-bar i{ animation:none; width:100%; background:#22c55e; transition:width .5s ease, background .3s ease; }
-.splash.updated .splash-sub{ color:#16a34a; font-weight:600; }
-@keyframes splashPop{ from{ opacity:0; transform:scale(.72) translateY(10px); } to{ opacity:1; transform:none; } }
-@keyframes splashRise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:none; } }
-@keyframes splashSlide{ 0%{ transform:translateX(-110%); } 100%{ transform:translateX(260%); } }
+/* 刚更新完：进度条走满并变绿，文字换成「已更新到 vX」——过渡拉长，变绿是一个过程 */
+.splash.updated .splash-bar i{ animation:none; width:100%; background:#22c55e; transition:width .9s cubic-bezier(.22,1,.36,1), background .6s ease; }
+.splash.updated .splash-sub{ color:#16a34a; font-weight:600; transition:color .5s ease; }
+@keyframes splashPop{ from{ opacity:0; transform:scale(.86) translateY(8px); } to{ opacity:1; transform:none; } }
+@keyframes splashRise{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:none; } }
+@keyframes splashSlide{ 0%{ transform:translateX(-110%); } 55%{ transform:translateX(150%); } 100%{ transform:translateX(300%); } }
 
 /* ============================================================
    安装新版本遮罩（v2.0）

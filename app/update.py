@@ -737,6 +737,21 @@ def install():
     size = os.path.getsize(target)
     if setup.get("size") and size != int(setup["size"]):
         raise UpdateError("安装包大小不符，请重新下载", 400)
+    # 下载线程校验过 sha256，但「下载完成」到「用户点安装」之间可能隔了几小时：
+    # 杀软隔离后还原、被人为替换都可能让磁盘上的文件与当时不同。安装是最后一道
+    # 防线，重算一次哈希；不一致就删掉文件让用户重下，绝不静默装一个被换过的包。
+    expect_sha = str(setup.get("sha256") or "").lower()
+    if expect_sha:
+        h = hashlib.sha256()
+        with open(target, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        if h.hexdigest() != expect_sha:
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+            raise UpdateError("安装包校验失败（与下载时不一致），已删除，请重新下载", 400)
 
     exe = os.path.abspath(sys.executable)
     # 用 cmd 起一个延迟链，而不是直接 Popen 安装器：

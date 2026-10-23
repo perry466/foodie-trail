@@ -52,8 +52,10 @@ def stable_record_id(raw):
     sid = normalize_id(raw)
     if sid:
         return sid
-    if isinstance(raw, str) and raw.strip():
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, "foodmap:" + raw.strip()))
+    # 数值型老 ID（JSON 里是数字，不是字符串）同样要落得稳定：str() 之后再 uuid5。
+    # 只对字符串做 uuid5 的话，同一份备份重复导入会各得一条 uuid4 新记录——导两次多一倍。
+    if raw is not None and str(raw).strip():
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, "foodmap:" + str(raw).strip()))
     return str(uuid.uuid4())
 
 

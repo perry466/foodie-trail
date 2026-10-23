@@ -49,7 +49,7 @@ function verCmp(a,b){
 /* ---------------- 开屏动画 ----------------
    纯 DOM 操作、不依赖 Vue：首屏数据（地图 + 记录）到位后才淡出，最少停留
    900ms（否则一闪而过像故障），最多 2.8s 强制让开（否则接口卡住就是一片白）。 */
-const SPLASH_MIN_MS=900, SPLASH_MAX_MS=3200, _splashAt=Date.now();
+const SPLASH_MIN_MS=1600, SPLASH_MAX_MS=3800, _splashAt=Date.now();
 let _splashDone=false;
 /* 先把「已更新到 vX」写上去、再等数据：这两件事必须分开。
    合在一起写的话，首屏慢（地图/接口 2–4 秒）时文案是在淡出前一瞬间才换上去的，
@@ -68,12 +68,12 @@ function splashReady(note){
   const el=document.getElementById('splash');
   if(!el) return;
   if(note) splashNote(note);
-  // 更新提示要留够阅读时间；普通启动则是最少停留 900ms，避免一闪而过像故障
-  const floor = el.dataset.noted==='1' ? 1300 : SPLASH_MIN_MS;
+  // 更新提示要留够阅读时间；普通启动最少停留 1.6s——开屏是节奏的一部分，不是故障页
+  const floor = el.dataset.noted==='1' ? 1800 : SPLASH_MIN_MS;
   const wait=Math.max(0, floor-(Date.now()-_splashAt));
   setTimeout(()=>{
     el.classList.add('out');
-    setTimeout(()=>{ if(el.parentNode) el.remove(); }, 520);
+    setTimeout(()=>{ if(el.parentNode) el.remove(); }, 800);
   }, wait);
 }
 setTimeout(()=>splashReady(), SPLASH_MAX_MS);
@@ -731,12 +731,16 @@ const App = {
     /* 数据加载 */
     async loadRecords(){
       const f=this.filters;
+      // 序列号防竞态：快速切筛选/搜索时，先发出的请求可能后返回，把新结果盖回去。
+      // 地图有 _mapSeq，列表之前没有——补上同一套保护。
+      const seq=(this._recSeq=(this._recSeq||0)+1);
       // 列表始终把草稿取回来（否则勾选"存为草稿"的记录会从列表和地图上彻底消失），
       // 再由前端按 filters.drafts 决定显示范围
       let url=`/api/records?${this._filterQuery(true)}`;
       if(f.viewOnly && this.viewBounds){ const b=this.viewBounds; url+=`&swLng=${b.swLng}&swLat=${b.swLat}&neLng=${b.neLng}&neLat=${b.neLat}`; }
       try{
         const recs=await API.get(url);
+        if(seq!==this._recSeq) return;   // 已有更新的请求在路上，这份旧响应作废
         this.records=recs; this.listTotal=this._visible(recs).length;
         // 清除已不存在于当前结果里的选中项（如被筛掉或已删除），避免误删
         if(this.selectedIds.length){
@@ -1230,7 +1234,10 @@ const App = {
             ? ('发现新版本 v'+r.latest+'，GitHub 接口额度已用完，只能手动下载')
             : ('发现新版本 v'+r.latest);
           this.updateMsg=m+this._cacheNote(r);
-          this._showUpdateBanner();
+          // 「忽略此版本」在启动路径上已判断；手动点「检查更新」也应该一致——
+          // 用户刚点过 ✕，再主动查一次却把横幅弹回来，会让他以为 ✕ 没生效。
+          const skip=(()=>{ try{ return localStorage.getItem('fm-skip-version')||''; }catch(e){ return ''; } })();
+          if(!skip || r.latest!==skip) this._showUpdateBanner();
         }else if(r.stale){
           // 联网失败兜底：此时「已是最新版本」这个断言根本不成立——根本没查成。
           // 必须明说失败 + 显示的是多久之前的结果，否则刚发布的新版会被旧缓存挡住。

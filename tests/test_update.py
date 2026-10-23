@@ -3,6 +3,7 @@
 这一组用例**全部不联网**——一律 monkeypatch `update._fetch_latest`。
 更新功能最怕两件事：GitHub 不通时把应用搞崩，以及版本号比错导致永久提示。
 """
+import hashlib
 import json
 import os
 import time
@@ -192,8 +193,10 @@ def test_install_spawns_cmd_chain_as_plain_string(monkeypatch, tmp_path):
     """
     target = tmp_path / "FoodieTrail-9.9.9-windows-x64-setup.exe"
     target.write_bytes(b"x" * 20)                      # 与 _release() 里的 size 一致
+    rel = _release()
+    rel["setup"]["sha256"] = hashlib.sha256(b"x" * 20).hexdigest()  # 安装前要重算哈希
     monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
-    monkeypatch.setattr(upd, "_read_cache", lambda: _release())
+    monkeypatch.setattr(upd, "_read_cache", lambda: rel)
     monkeypatch.setattr(upd, "_safe_download_path", lambda name: str(target))
     monkeypatch.setattr(upd.os, "name", "nt")
     monkeypatch.setattr(upd.sys, "executable", r"C:\app\FoodieTrail.exe")
@@ -822,3 +825,27 @@ def test_latest_json_success_is_written_to_cache(monkeypatch):
     assert r["canAutoInstall"] is True
     with open(upd.UPDATE_CACHE_PATH, encoding="utf-8") as f:
         assert json.load(f)["latest"] == "9.9.9"
+
+
+def test_install_rehashes_package_and_refuses_mismatch(monkeypatch, tmp_path):
+    """下载完成到点安装之间文件可能被换（杀软还原、人为替换）：安装前必须重算 sha256。
+
+    这是最后一道防线——不一致就删文件让用户重下，绝不静默装一个被换过的包。
+    """
+    import hashlib as _h
+
+    target = tmp_path / "FoodieTrail-9.9.9-windows-x64-setup.exe"
+    target.write_bytes(b"tampered" + b"!" * 12)   # 20 字节，与 _release() 的 size 一致
+    rel = _release()
+    rel["setup"]["sha256"] = "f" * 64          # 与磁盘内容必然不符
+    monkeypatch.setattr(upd, "detect_mode", lambda: "installer")
+    monkeypatch.setattr(upd, "_read_cache", lambda: rel)
+    monkeypatch.setattr(upd, "_safe_download_path", lambda name: str(target))
+    monkeypatch.setattr(upd, "_delayed_exit", lambda s: None)
+    monkeypatch.setattr(upd.subprocess, "Popen",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该启动安装器")))
+
+    with pytest.raises(upd.UpdateError) as e:
+        upd.install()
+    assert "校验失败" in e.value.message
+    assert not target.exists()                 # 被换过的包必须删掉
