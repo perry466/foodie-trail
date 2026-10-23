@@ -179,24 +179,27 @@ Safety rules built in:
 
 ## ⚙️ 10. Settings
 
-*More → Settings* manages the optional Amap integration:
+*More → Settings* holds everything configurable. Keys are stored only in the local database (Fernet-encrypted) and never sent anywhere.
 
-| Field | Purpose |
-| --- | --- |
-| JS API key + security code | browser map SDK |
-| Web-service key | backend proxy: POI search, geocoding, driving route |
+| Field | Choose on Amap | Purpose |
+| --- | --- | --- |
+| JS API key + security code | *Web end (JS API)* | map SDK in the browser: basemap, markers, clustering |
+| Web-service key | *Web service* | backend proxy: POI search, geocoding, driving routes. **Never exposed to the browser** |
 
+- Both keys are needed: without the JS API key there is no map; without the web-service key search and address picking are unavailable.
 - Saved values come back masked; leaving a field empty keeps the stored value.
 - *Test connection* asks Amap whether the stored keys are valid.
 - *Clear security code* removes only `securityJsCode`; *Clear all* removes every key. Both ask for confirmation.
 - Saving a key reloads the page, because the map SDK can only be initialised once per page load.
+- **Show markers on the map**: turning it off leaves only the basemap. Records are untouched and the list still works; the switch is remembered across launches.
 
 ### 10.1 Checking for updates
 
 *More → Settings → ④ About & updates* shows the current version, how this copy was installed, and whether a newer release exists.
 
 - **Auto check on start** is on by default. It asks GitHub once per launch (cached for 30 minutes) and shows a non-blocking bar under the toolbar when a new version exists. *✕* on that bar ignores the version until the next one is released.
-- The check sends your IP address to GitHub. Turn the switch off if that matters to you; manual *Check for updates* still works.
+- The check calls `api.github.com`, so GitHub sees your IP address — as with any network request, this is not specific to this feature. You can turn the switch off if you do not want the app going online by itself; manual *Check for updates* still works.
+- Why a fresh release sometimes is not detected: the anonymous GitHub API quota is **60 requests per hour, counted per egress IP**. Shared egress (office/campus networks, proxy nodes) can have it drained by someone else, which returns 403. The app then falls back to the **quota-free web endpoint** (`github.com/…/releases/latest`, read from its redirect) to learn the version number: it still tells you a new version exists and points you to a manual download, and it will not auto-install without a checksum. Only if the web endpoint fails too does it say *Check failed: 〈reason〉* and mark the result as a cached one from N minutes ago.
 - The bar never interrupts: if GitHub is unreachable you get one grey line in Settings, nothing else. Nothing is shown at startup. The message is **always one Chinese sentence** (what happened, how long to wait, where else to look) — GitHub's raw English error text is never shown.
 - Networking tries a **direct connection first, then the Windows system proxy** (read from the registry, not just environment variables), whichever works. Direct-only fails on networks that can only leave through a proxy (corporate or campus networks); proxy-only makes `api.github.com` return 403 quite often, because the proxy exit is a shared IP whose 60/hour quota other people consume. Set `FOODMAP_UPDATE_NO_PROXY=1` to force direct when a corporate proxy intercepts.
 

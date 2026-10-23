@@ -543,9 +543,9 @@ const App = {
     /* 不能自动安装时，按形态给对应的操作——源码版没 exe 可替换，让它去"替换 _internal"是错的 */
     updateModeHint(){
       if(this.updateInfo && this.updateInfo.canAutoInstall) return '';
-      if(this.appMode==='source') return '源码版：在项目目录 git pull 后重启服务即可，无需下载安装包。';
-      if(this.appMode==='portable') return '绿色版：下载后替换 FoodieTrail.exe 与 _internal，不要覆盖 data 目录。';
-      return '安装版：当前拿不到安装包信息（GitHub 接口受限），可点「复制下载链接」用浏览器下载后覆盖安装。';
+      if(this.appMode==='source') return '源码版：git pull 后重启服务即可。';
+      if(this.appMode==='portable') return '绿色版：下载后替换 exe 与 _internal，别覆盖 data。';
+      return '拿不到安装包信息，点「复制下载链接」用浏览器下载后覆盖安装。';
     },
     /* ---------- 安装遮罩的文案与步骤（模板直接取用，别在模板里写逻辑） ---------- */
     installTitle(){

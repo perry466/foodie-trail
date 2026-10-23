@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261022m" />
+  <link rel="stylesheet" href="/css/style.css?v=20261023a" />
   <!-- 主题必须在首帧之前定下来：等 mounted() 再设 data-theme，深色模式用户会先看到
        一屏白底的开屏动画（这段内联脚本是唯一能在 CSS 应用前改根属性的地方）。 -->
   <script>try{if(localStorage.getItem('fm-theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
@@ -426,17 +426,17 @@
         <div class="modal-card">
           <div class="modal-head"><h3>设置</h3><button class="drawer-close" aria-label="关闭设置" title="关闭设置" @click="settingsOpen=false">✕</button></div>
           <div class="modal-body">
-            <p class="hint" style="margin-top:0">高德 Key 仅存于本地数据库（Fernet 加密）。个人实名免费。需申请两种 Key：</p>
+            <p class="hint" style="margin-top:0">Key 仅存本机（加密），个人免费。需两种：</p>
             <div class="settings-group">
               <div class="sg-title">① 前端地图（JS API）</div>
-              <p class="hint">服务平台选「Web端(JS API)」，用于浏览器显示地图、打点、聚合。</p>
+              <p class="hint">服务平台选「Web 端 (JS API)」</p>
               <label class="field"><span class="lbl">JS API Key</span><input type="text" v-model="settings.key" placeholder="高德开放平台申请的 JS API Key" @focus="$event.target.select()" /></label>
               <label class="field"><span class="lbl">安全密钥 securityJsCode</span><input type="text" v-model="settings.security" placeholder="留空=保持原有；已设置时以掩码回显" @focus="$event.target.select()" /></label>
               <button v-if="mapConfig.security" type="button" class="mini-link" @click="clearSecurity">清除已存的安全密钥</button>
             </div>
             <div class="settings-group">
               <div class="sg-title">② 后端代理（Web 服务）</div>
-              <p class="hint">服务平台选「Web服务」，用于 POI 搜索、地址→坐标、驾车路线。仅存后端，不下发浏览器。</p>
+              <p class="hint">服务平台选「Web 服务」</p>
               <label class="field"><span class="lbl">Web 服务 Key</span><input type="password" v-model="settings.webKey" placeholder="留空=不修改（已设置则不回显）" autocomplete="new-password" /></label>
             </div>
             <div class="settings-group">
@@ -444,7 +444,6 @@
               <div class="switch-row">
                 <div>
                   <div class="switch-name">在地图上显示美食描点</div>
-                  <p class="hint" style="margin:2px 0 0">关闭后地图只显示底图，不显示记录标记（设置会记住）。</p>
                 </div>
                 <button class="switch" :class="{on: showMarkers}" role="switch" aria-label="在地图上显示美食描点" :aria-checked="showMarkers" :aria-pressed="showMarkers" @click="setShowMarkers(!showMarkers)"></button>
               </div>
@@ -466,7 +465,6 @@
               <div class="switch-row">
                 <div>
                   <div class="switch-name">启动时检查更新</div>
-                  <p class="hint" style="margin:2px 0 0">每次打开会向 GitHub 查一次最新版本（会暴露本机 IP）。关掉后只能在这里手动检查。</p>
                 </div>
                 <button class="switch" :class="{on: autoUpdateCheck}" role="switch" aria-label="启动时检查更新" :aria-checked="autoUpdateCheck" :aria-pressed="autoUpdateCheck" @click="setAutoUpdateCheck(!autoUpdateCheck)"></button>
               </div>
@@ -500,9 +498,7 @@
                 </div>
 
                 <p class="hint" style="margin-top:8px" v-if="updateInfo.canAutoInstall">
-                  安装时程序会退出，装完自动重新打开；<b>data 目录不会被删除</b>。安装包没有代码签名，Windows 可能弹 SmartScreen，点「更多信息 → 仍要运行」即可。<br>
-                  下载会依次尝试直连与 Windows 系统代理；两条都不通时改用「复制下载链接」。下载途中可随时点「取消下载」，不会留下半截安装包。
-                  万一自动安装没反应，点「打开安装包位置」直接双击那个 exe 也能装。
+                  装完自动重开，<b>data 不会动</b>。没反应就点「打开安装包位置」手动运行。
                 </p>
                 <p class="hint" style="margin-top:8px" v-else>{{ updateModeHint }}</p>
               </div>
@@ -840,6 +836,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261022m"></script>
+  <script src="/js/app.js?v=20261023a"></script>
 </body>
 </html>
