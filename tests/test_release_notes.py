@@ -6,6 +6,7 @@
 变成一条会红的用例，而不是靠人记。
 """
 import importlib
+import textwrap
 
 import pytest
 
@@ -80,3 +81,44 @@ def test_script_writes_file_and_reports_missing(monkeypatch, capsys, tmp_path):
 
     monkeypatch.setattr("sys.argv", ["release_notes.py", "0.0.1", "--out", str(out)])
     assert rn.main() == 1                       # 缺章节必须失败，不能发出去
+
+
+def test_extract_user_notes_pulls_only_that_section():
+    """「给用户的说明」是应用内更新面板的内容源：只吃本小节，遇到下一个 ### 就停。"""
+    md = textwrap.dedent("""
+    ## [9.9.9] - 2026-01-01
+
+    ### 给用户的说明
+
+    - 修复了一些问题，提升了稳定性。
+
+    ### 新增
+
+    - 内部模块 X 改为 Y（这条不该出现在用户面板里）。
+
+    ### 修复
+
+    - z
+
+    ## [9.9.8] - 2025-12-01
+    """)
+    notes = rn.extract_user_notes(md, "9.9.9")
+    assert notes is not None
+    assert "稳定性" in notes
+    assert "内部模块" not in notes          # 技术细节不进用户面板
+    assert "9.9.8" not in notes             # 不越界到下一版
+
+
+def test_extract_user_notes_missing_section_returns_none():
+    """没写用户说明时不报错（说明可以逐步补，不该卡发布），由调用方用兜底文案。"""
+    md = textwrap.dedent("""
+    ## [9.9.9] - 2026-01-01
+
+    ### 修复
+
+    - 某个内部修复
+
+    ## [9.9.8] - 2025-12-01
+    """)
+    assert rn.extract_user_notes(md, "9.9.9") is None
+    assert rn.extract_user_notes("没有章节", "9.9.9") is None

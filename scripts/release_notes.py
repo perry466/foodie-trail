@@ -111,6 +111,39 @@ def extract_section(text, version):
     return "\n".join(body).strip() or None
 
 
+USER_NOTES_HEAD = re.compile(r"^###\s*给用户的说明\s*$")
+
+
+def extract_user_notes(text, version):
+    """抽取章节里「### 给用户的说明」小节——应用内更新面板显示的就是它。
+
+    为什么单独一层：CHANGELOG 章节写的是开发者视角（改了哪些模块、为什么），
+    用户在应用里点「可升级到 vX」时看到的应该是人话（加了什么、修了什么）。
+    章节里没写这个小节时返回 None，调用方用兜底文案——**不报错**：
+    说明的完整度可以逐步补，不该卡发布。
+
+    边界：只吃本小节，遇到下一个 `### ` 或下一个版本标题就停。
+    """
+    section = extract_section(text, version)
+    if not section:
+        return None
+    lines = section.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if USER_NOTES_HEAD.match(line.strip()):
+            start = i + 1
+            break
+    if start is None:
+        return None
+    out = []
+    for line in lines[start:]:
+        if re.match(r"^###\s", line) or re.match(r"^##\s*\[", line):
+            break
+        out.append(line)
+    body = "\n".join(out).strip()
+    return body or None
+
+
 def main():
     _safe_console()
     ap = argparse.ArgumentParser(description="按 CHANGELOG 生成 Release 正文")

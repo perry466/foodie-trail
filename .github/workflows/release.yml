@@ -110,7 +110,7 @@ jobs:
       # latest.json：应用内检查更新的备用数据源（走下载域名，不占 GitHub API 额度）。
       # 没有 sha256 就拒绝发布——没有校验值，应用不会自动安装。
       - name: Generate latest.json
-        run: python scripts/make_latest_json.py ${{ steps.ver.outputs.v }} --setup "installer/Output/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64-setup.exe" --zip "release/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64.zip" --notes release/release-notes.md
+        run: python scripts/make_latest_json.py ${{ steps.ver.outputs.v }} --setup "installer/Output/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64-setup.exe" --zip "release/FoodieTrail-${{ steps.ver.outputs.v }}-windows-x64.zip"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

@@ -14,8 +14,7 @@
 用法（CI 里在 Publish 之前）：
     python scripts/make_latest_json.py 2.0.4 \\
         --setup installer/Output/FoodieTrail-2.0.4-windows-x64-setup.exe \\
-        --zip release/FoodieTrail-2.0.4-windows-x64.zip \\
-        --notes release/release-notes.md
+        --zip release/FoodieTrail-2.0.4-windows-x64.zip
 
 产物：`release/latest.json`（release/ 在 .gitignore 里，不入库）。
 """
@@ -64,7 +63,7 @@ def _asset(path: Path, version: str) -> dict:
     }
 
 
-def build(version: str, setup: Path, zip_path: Path, notes: Path) -> dict:
+def build(version: str, setup: Path, zip_path: Path, user_notes: str) -> dict:
     # 版本号是唯一防线：latest.json 里的 version 与 tag 不一致时，装好的新版本
     # 仍会认为自己是旧版、每次启动都提示更新（CI 的 tag 闸门只管 tag，管不到这里）。
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
@@ -75,11 +74,39 @@ def build(version: str, setup: Path, zip_path: Path, notes: Path) -> dict:
         "publishedAt": published,
         "setup": _asset(setup, version),
         "zip": _asset(zip_path, version),
-        "notes": notes.read_text(encoding="utf-8").strip() if notes.is_file() else "",
+        # notes 是应用内「可升级到 vX」面板显示的内容——必须是用户视角的人话
+        # （加了什么功能、修了什么），不是 CHANGELOG 的技术全文。
+        # 2026-10-23 用户反馈：把开发者日志全文塞给用户看是错的。
+        "notes": user_notes,
     }
     if not data["setup"]["sha256"]:
         raise SystemExit("[latest] setup 缺少 sha256，拒绝生成（没有校验值就不能自动安装）")
     return data
+
+
+def _user_notes(version: str, explicit: str | None) -> str:
+    """应用内更新面板显示的说明：只给用户视角的人话。
+
+    优先级：显式文件 > CHANGELOG 的「### 给用户的说明」小节 > 兜底一句话。
+    绝不把 CHANGELOG 技术全文塞给用户（2026-10-23 用户反馈定下的规矩）。
+    """
+    fallback = "本次更新修复了一些问题，提升了稳定性。"
+    if explicit:
+        p = Path(explicit)
+        if not p.is_file():
+            raise SystemExit(f"[latest] 找不到用户说明文件 {p}")
+        body = p.read_text(encoding="utf-8").strip()
+        return body or fallback
+    try:
+        sys.path.insert(0, str(ROOT))
+        from scripts.release_notes import extract_user_notes
+        body = extract_user_notes((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), version)
+        return body or fallback
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"[latest] 抽取用户说明失败（{e}），使用兜底文案")
+        return fallback
 
 
 def main(argv=None) -> int:
@@ -87,13 +114,16 @@ def main(argv=None) -> int:
     ap.add_argument("version", help="版本号，如 2.0.4 或 v2.0.4")
     ap.add_argument("--setup", required=True, help="setup.exe 路径")
     ap.add_argument("--zip", dest="zip_path", required=True, help="portable zip 路径")
-    ap.add_argument("--notes", default=str(ROOT / "release" / "release-notes.md"))
+    ap.add_argument("--user-notes", dest="user_notes", default=None,
+                    help="用户版说明文本文件；缺省时自动从 CHANGELOG 的「给用户的说明」小节抽取")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     args = ap.parse_args(argv)
     _safe_console()
 
     version = args.version.lstrip("v")
-    data = build(version, Path(args.setup), Path(args.zip_path), Path(args.notes))
+    notes = _user_notes(version, args.user_notes)
+    print(f"[latest] 用户说明：{notes.splitlines()[0][:60]}…")
+    data = build(version, Path(args.setup), Path(args.zip_path), notes)
     out = Path(args.out)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"[latest] 已写入 {out}（version={version}）")
