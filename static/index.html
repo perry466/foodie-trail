@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261027a" />
+  <link rel="stylesheet" href="/css/style.css?v=20261027b" />
   <!-- 主题必须在首帧之前定下来：等 mounted() 再设 data-theme，深色模式用户会先看到
        一屏白底的开屏动画（这段内联脚本是唯一能在 CSS 应用前改根属性的地方）。 -->
   <script>try{if(localStorage.getItem('fm-theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
@@ -472,18 +472,14 @@
                 <span class="upd-mode" v-if="appMode">{{ modeText }}</span>
               </p>
 
-              <p class="hint" v-if="appMode==='android'" style="margin-bottom:8px">
-                安卓版通过安装新版 APK 更新，应用内的记录与照片会保留。
-              </p>
-
-              <div class="switch-row" v-if="appMode && appMode!=='android'">
+              <div class="switch-row" v-if="appMode">
                 <div>
                   <div class="switch-name">启动时检查更新</div>
                 </div>
                 <button class="switch" :class="{on: autoUpdateCheck}" role="switch" aria-label="启动时检查更新" :aria-checked="autoUpdateCheck" :aria-pressed="autoUpdateCheck" @click="setAutoUpdateCheck(!autoUpdateCheck)"></button>
               </div>
 
-              <div class="upd-box" v-if="appMode!=='android' && updateInfo.hasUpdate">
+              <div class="upd-box" v-if="updateInfo.hasUpdate">
                 <div class="upd-head">
                   <b>可升级到 v{{ updateInfo.latest }}</b>
                   <span v-if="updateInfo.publishedAt">{{ fmtDate(updateInfo.publishedAt) }}</span>
@@ -517,12 +513,12 @@
                 <p class="hint" style="margin-top:8px" v-else>{{ updateModeHint }}</p>
               </div>
 
-              <div class="upd-acts" style="margin-top:10px" v-if="appMode!=='android'">
+              <div class="upd-acts" style="margin-top:10px">
                 <button class="btn-ghost" :disabled="updateBusy" @click="checkUpdate(true)">{{ updateBusy ? '检查中…' : '检查更新' }}</button>
                 <button class="btn-ghost" v-if="updateInfo.downloadUrl" @click="copyUpdateUrl">复制下载链接</button>
                 <button class="btn-ghost" @click="openReleasePage">前往 Release 页面</button>
               </div>
-              <div class="form-msg" style="margin-top:8px" v-if="appMode!=='android'">{{ updateMsg }}</div>
+              <div class="form-msg" style="margin-top:8px">{{ updateMsg }}</div>
             </div>
           </div>
         </div>
@@ -850,6 +846,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261027a"></script>
+  <script src="/js/app.js?v=20261027b"></script>
 </body>
 </html>

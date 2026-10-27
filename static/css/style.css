@@ -1195,7 +1195,7 @@ body.fm-list-open .map-banner{ left:calc(50% + 214px); max-width:min(480px,calc(
 .is-note{ margin:14px 0 0; font-size:11px; line-height:1.6; color:var(--muted); }
 
 /* ============================================================
-   手机 / 平板适配（Android WebView、窄屏浏览器）
+   手机 / 平板适配（窄屏浏览器）
    - 顶栏与悬浮抽屉避开刘海/状态栏安全区
    - ≤980px 搜索改为图标 + 浮层输入，不再把 input 直接 display:none
    - ≤420px 进一步压缩顶栏，保证「更多」不会被挤出屏幕

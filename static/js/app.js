@@ -122,17 +122,10 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 /* 记录/照片 id 拼进 URL 前必须编码：id 里出现 / ? # & 会让路径错位，详情直接 404 */
 const recPath = id => '/api/records/' + encodeURIComponent(id);
 const photoPath = id => '/api/photos/' + encodeURIComponent(id);
-/* 外部链接：Android WebView 不支持 window.open 新窗口，交给原生桥用系统浏览器打开；
-   桌面/普通浏览器仍走 window.open。 */
+/* 外部链接统一用新窗口打开 */
 function openExternalUrl(url){
   const s=String(url||'');
   if(!/^https?:\/\//i.test(s)) return;
-  try{
-    if(window.Android && typeof window.Android.openExternal==='function'){
-      window.Android.openExternal(s);
-      return;
-    }
-  }catch(e){ /* 没桥接就走下面的兜底 */ }
   window.open(s,'_blank','noopener');
 }
 function toast(msg, action){
@@ -559,7 +552,7 @@ const App = {
       return this.visibleRecords.slice(0,n);
     },
     /* 运行形态：设置面板里显示「安装版 / 绿色版 / 源码版」 */
-    modeText(){ return this.appMode==='android' ? '安卓版' : (this.appMode==='installer' ? '安装版' : (this.appMode==='portable' ? '绿色版' : '源码版')); },
+    modeText(){ return this.appMode==='installer' ? '安装版' : (this.appMode==='portable' ? '绿色版' : '源码版'); },
 
     /* 更新说明是 GitHub Release 的 markdown 原文，直接显示会露出
        **Full Changelog** 这种标记（用户截图踩过）；这里只做无害清洗，
@@ -1552,15 +1545,12 @@ const App = {
       this._syncDownload();
     },
     _initUpdate(){
-      // 安卓版由 APK 安装包更新，不查 GitHub、也不显示 Windows 的更新入口
-      if(this.appMode==='android') return;
       try{ this.autoUpdateCheck=localStorage.getItem('fm-auto-update')!=='0'; }catch(e){ this.autoUpdateCheck=true; }
       if(!this.autoUpdateCheck) return;
       let skip='';
       try{ skip=localStorage.getItem('fm-skip-version')||''; }catch(e){}
       // 延迟 2 秒：先让地图和清单把首屏请求跑完，不跟启动抢带宽
       setTimeout(async()=>{
-        if(this.appMode==='android') return;
         await this.checkUpdate(false);
         const info=this.updateInfo||{};
         if(info.ok && info.hasUpdate && info.latest && info.latest!==skip) this._showUpdateBanner();
@@ -2043,27 +2033,6 @@ const App = {
       window.location.href=`/api/export?mode=full&includeDrafts=1&${this._filterQuery(false)}`;
     },
 
-    /* Android 实体返回键：按「最上层浮层先关」的顺序退，全部关完返回 false 让原生退出。
-       与键盘 Escape 的行为保持一致，但不把浏览器历史当成浮层栈。 */
-    handleBack(){
-      const lb=$('#lightbox');
-      if(lb && !lb.classList.contains('hidden')){ closeLightbox(); return true; }
-      if(this.searchOpen){ this.closeMobileSearch(); return true; }
-      if(this.confirmBox.open){ this.closeConfirm(false); return true; }
-      if(this.pickingMap){ this.cancelPick(); return true; }
-      if(this.selectMode){ this.exitSelect(); return true; }
-      if(this.filterOpen){ this.filterOpen=false; return true; }
-      if(this.detailOpen){ this.closeDetail(); this._syncURL(); return true; }
-      if(this.moreOpen){ this.moreOpen=false; return true; }
-      if(this.settingsOpen||this.formOpen||this.dashOpen||this.importOpen){
-        this.settingsOpen=this.formOpen=this.dashOpen=this.importOpen=false;
-        this._syncURL();
-        return true;
-      }
-      if(this.panel!=='none'){ this.panel='none'; this._syncURL(); return true; }
-      return false;
-    },
-
     /* lightbox 桥接 */
     openLightbox(photos,i){ openLightbox(photos,i); },
   },
@@ -2080,8 +2049,6 @@ const App = {
     this._readURL();   // 支持 ?view=list&rating=4&tags=火锅 这样的深链接
     if(localStorage.getItem('fm-show-markers')==='0') this.showMarkers=false;
     bindLightbox();
-    /* 供 Android 壳的返回键调用；返回 true 表示这次返回被页面消费 */
-    window.__fmBack = () => this.handleBack();
     // 全局快捷键 & 点击外部关闭浮层
     document.addEventListener('keydown',e=>{
       if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;

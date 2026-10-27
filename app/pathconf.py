@@ -31,12 +31,7 @@ DATA_DIR = os.path.abspath(os.environ.get("FOODMAP_DATA_DIR") or os.path.join(AP
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 DB_PATH = os.path.join(DATA_DIR, "foodmap.db")
 FERNET_KEY_PATH = os.path.join(DATA_DIR, ".fernet.key")
-# 静态资源目录：默认包内 static/。
-# Android 版把前端从 APK assets 复制到应用私有目录，再用 FOODMAP_STATIC_DIR 指定；
-# 桌面/打包模式不设这个变量，行为与以前完全一致。
-STATIC_DIR = os.path.abspath(
-    os.environ.get("FOODMAP_STATIC_DIR") or os.path.join(BUNDLE_DIR, "static")
-)
+STATIC_DIR = os.path.join(BUNDLE_DIR, "static")
 
 # 更新相关：下载的安装包与「上次检查结果」缓存。
 # 下载目录必须留在 DATA_DIR 内部——安装时会用 realpath 校验它，越界一律拒绝执行。
