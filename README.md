@@ -291,7 +291,7 @@ Drafts are included by default, and the current filters still apply — clear th
 
 ```bash
 python -m pytest tests -q      # 241 backend cases
-node tests/front-check.js      # 61 front-end assertions (Node 18+)
+node tests/front-check.js      # 64 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```
 

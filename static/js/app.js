@@ -1392,6 +1392,10 @@ const App = {
     },
     _pollDownload(){
       clearInterval(this._dlTimer);
+      /* 300ms 采一次。原来是 800ms：25MB 安装包约 7 秒下完，只采到 8 个点，
+         每个点跳 12% 左右，看起来是一顿一顿的；再叠加网络「前段慢（TCP 慢启动）、
+         后段跑满带宽」的天然曲线，后半段每次跳得更多，主观感受就是「后面突然变快」。
+         transition 比采样间隔略短（0.26s），每次动画刚好走完下一个值就到，衔接最连贯。 */
       this._dlTimer=setInterval(async()=>{
         try{
           const d=await API.get('/api/update/download');
@@ -1410,7 +1414,7 @@ const App = {
             this.updateMsg='下载失败：'+(d.error||'未知错误')+'。可点「复制下载链接」用浏览器或下载工具获取';
           }
         }catch(e){ /* 轮询失败不打断，下一轮继续 */ }
-      },800);
+      },300);
     },
     /* 打开设置时同步一次下载进度：设置面板关掉再打开、或者刷新过页面之后，
        前端内存里的 dl 可能还停在 idle，那样就没有「取消下载」按钮可点。 */
@@ -1478,9 +1482,27 @@ const App = {
       if(msg!==undefined) this.installError=msg;
       if(p==='closing'&&this.installPercent<6) this.installPercent=6;
       if(p==='installing'&&this.installPercent<14) this.installPercent=14;
-      if(p==='done'){ this.installPercent=100; this.updateBusy=false; }
+      // 装完不要直接把 installPercent 设成 100：原来从 88% 一帧跳到 100%，
+      // 配合 .45s 的 width 过渡，视觉上是「最后一段猛冲过去」——而前面每 450ms 才涨 3%，
+      // 速度差十几倍，这就是「最后特别快」的来源。改成约 1 秒的冲刺补齐。
+      if(p==='done'){ this.updateBusy=false; this._sprintInstallBar(); }
       // 服务已经没了的时候，「打开安装包位置」这个接口也调不通，别给它留按钮
       if(p==='timeout') this.installDead=!!this._installSeenDeath;
+    },
+    /* 收尾冲刺：每 200ms 吃掉剩余距离的 40%（最少 2.5 个百分点）。
+       正常应该从 85–95% 补到 100，两三步、半秒内完成；即使 done 来得早（条才 60%），
+       也是 1.5 秒左右补完，而不是原来那样一帧跳过十几个点。 */
+    _sprintInstallBar(){
+      clearInterval(this._installTimer);
+      this._installTimer=setInterval(()=>{
+        const left=100-this.installPercent;
+        if(left<=0.5){
+          this.installPercent=100;
+          clearInterval(this._installTimer); this._installTimer=null;
+          return;
+        }
+        this.installPercent=Math.min(100, +(this.installPercent+Math.max(2.5, left*0.4)).toFixed(1));
+      },200);
     },
     /* 进度条靠两条信息拼出来：前端能确定的「阶段」+ 对服务存活状态的探测。
        不假装知道安装器的真实百分比——Inno 静默模式没有可读进度，编一个精确
@@ -1489,15 +1511,18 @@ const App = {
       clearInterval(this._installTimer);
       this._installTimer=setInterval(()=>{
         if(!this.installOpen) return;
-        // 上限按阶段递进：安装中最多走到 88%，剩下的留到「检测到新版本」那一下
-        const cap = this.installPhase==='installing' ? 88
+        // 上限按阶段递进：安装中最多走到 95%，剩下的交给 done 时的冲刺（_sprintInstallBar）
+        const cap = this.installPhase==='installing' ? 95
                   : this.installPhase==='closing' ? 12
-                  : this.installPhase==='done' ? 100 : this.installPercent;
+                  : this.installPercent;
         if(this.installPercent<cap){
-          // 0.03 是「每 450ms 吃掉剩余距离的 3%」：约 10 秒到 30%，20 秒到 70%，
-          // 真装完再跳到 100%。比线性好——不会在前 5 秒就冲到 90% 然后干等。
+          // 指数逼近是错的：它天然前快后慢，实测 3.6 秒就冲到 48%，后面十几秒几乎不动。
+          // 安装时长前端根本不知道，所以按「匀速推进 + 尾段慢爬」来：
+          //   12 → 85% 每 450ms 固定 +3 个点（约 11 秒），贴近真实安装时长；
+          //   85 → 95% 每 450ms +0.5（约 9 秒），装得慢时条也在动，不会卡住干等；
+          //   装完再走冲刺补齐，落差最多 10 个点。
           const step=this.installPhase==='installing'
-            ? Math.max(0.3, (cap-this.installPercent)*0.03)
+            ? (this.installPercent < 85 ? 3 : 0.5)
             : 3;
           this.installPercent=Math.min(cap, +(this.installPercent+step).toFixed(1));
         }

@@ -503,7 +503,7 @@ button{ font-family:inherit; cursor:pointer; }
   white-space:pre-wrap; word-break:break-word; max-height:96px; overflow:auto;
 }
 .upd-bar{ margin-top:10px; height:6px; border-radius:999px; background:var(--border); overflow:hidden; }
-.upd-bar-fill{ height:100%; background:var(--primary); border-radius:999px; transition:width .3s ease; }
+.upd-bar-fill{ height:100%; background:var(--primary); border-radius:999px; transition:width .26s ease-out; }
 .upd-acts{ display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
 
 /* 设置面板内的次要操作（如仅清除安全密钥） */

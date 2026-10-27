@@ -383,6 +383,27 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   check('配色共 5 套且默认辣椒红',
     app.accents.length === 5 && app.accents[0].key === 'coral', String(app.accents.length));
 
+  // ---- 下载进度采样密度 ----
+  // 800ms 采一次时，25MB 只会采到 8 个点、每点跳 12%，看起来一顿一顿；
+  // 而且网络前段慢后段快，后半段每点跳得更多，主观就是「后面突然变快」。
+  let pollMs = 0;
+  ctx.setInterval = (fn, ms) => { pollMs = ms; return 1; };
+  ctx.clearInterval = () => {};
+  app._pollDownload();
+  check('下载进度采样间隔 ≤500ms', pollMs > 0 && pollMs <= 500, pollMs + 'ms');
+
+  // ---- 安装完成时不许把进度条一帧拉到 100% ----
+  // 原来 done 直接 installPercent=100，从 88% 一帧跳过 12%，
+  // 而前面每 450ms 才涨 3%，这就是「最后特别快」的来源。
+  let sprintMs = 0;
+  ctx.setInterval = (fn, ms) => { sprintMs = ms; return 1; };
+  ctx.clearInterval = () => {};
+  app.installPercent = 88;
+  app.installPhase = 'installing';
+  app._setInstallPhase('done');
+  check('装完不瞬间跳到 100%（走冲刺补齐）', app.installPercent === 88, String(app.installPercent));
+  check('冲刺间隔 ≤200ms', sprintMs > 0 && sprintMs <= 200, sprintMs + 'ms');
+
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));
   if (fail.length) {
