@@ -86,26 +86,30 @@ def build(version: str, setup: Path, zip_path: Path, user_notes: str) -> dict:
 def _user_notes(version: str, explicit: str | None) -> str:
     """应用内更新面板显示的说明：只给用户视角的人话。
 
-    优先级：显式文件 > CHANGELOG 的「### 给用户的说明」小节 > 兜底一句话。
-    绝不把 CHANGELOG 技术全文塞给用户（2026-10-23 用户反馈定下的规矩）。
+    优先级：显式文件 > CHANGELOG 的「### 给用户的说明」小节 > **空**。
+
+    返回空字符串表示「这一版不需要给用户看说明」——应用内只显示「可升级到 vX」。
+    原先抽取不到时会兜底成「本次更新修复了一些问题，提升了稳定性。」，
+    但那种话对用户零信息量：看完还是不知道发生了什么，还白占一行。
+    纯内部改动（重构、依赖、测试、采样频率这类）留空就好，不是必须填的坑。
     """
-    fallback = "本次更新修复了一些问题，提升了稳定性。"
     if explicit:
         p = Path(explicit)
         if not p.is_file():
             raise SystemExit(f"[latest] 找不到用户说明文件 {p}")
-        body = p.read_text(encoding="utf-8").strip()
-        return body or fallback
+        return p.read_text(encoding="utf-8").strip()
     try:
         sys.path.insert(0, str(ROOT))
         from scripts.release_notes import extract_user_notes
         body = extract_user_notes((ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), version)
-        return body or fallback
+        return (body or "").strip()
     except SystemExit:
         raise
     except Exception as e:
-        print(f"[latest] 抽取用户说明失败（{e}），使用兜底文案")
-        return fallback
+        # 抽取失败说明脚本或 CHANGELOG 格式有问题：宁可这一版不显示说明，
+        # 也不给用户塞一句没信息量的话，但日志要留痕。
+        print(f"[latest] 抽取用户说明失败（{e}），本次不显示用户说明")
+        return ""
 
 
 def main(argv=None) -> int:
@@ -121,7 +125,8 @@ def main(argv=None) -> int:
 
     version = args.version.lstrip("v")
     notes = _user_notes(version, args.user_notes)
-    print(f"[latest] 用户说明：{notes.splitlines()[0][:60]}…")
+    # 空说明是正常情况（纯内部改动），别在这里崩：splitlines()[0] 对空串会 IndexError
+    print(f"[latest] 用户说明：{notes.splitlines()[0][:60] + '…' if notes else '（空，应用内只显示版本号）'}")
     data = build(version, Path(args.setup), Path(args.zip_path), notes)
     out = Path(args.out)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

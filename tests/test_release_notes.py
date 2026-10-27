@@ -110,7 +110,7 @@ def test_extract_user_notes_pulls_only_that_section():
 
 
 def test_extract_user_notes_missing_section_returns_none():
-    """没写用户说明时不报错（说明可以逐步补，不该卡发布），由调用方用兜底文案。"""
+    """没写用户说明时不报错，返回 None（调用方视为「这一版不需要说明」，不再兜底废话）。"""
     md = textwrap.dedent("""
     ## [9.9.9] - 2026-01-01
 
