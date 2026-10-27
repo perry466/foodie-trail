@@ -122,6 +122,19 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 /* 记录/照片 id 拼进 URL 前必须编码：id 里出现 / ? # & 会让路径错位，详情直接 404 */
 const recPath = id => '/api/records/' + encodeURIComponent(id);
 const photoPath = id => '/api/photos/' + encodeURIComponent(id);
+/* 外部链接：Android WebView 不支持 window.open 新窗口，交给原生桥用系统浏览器打开；
+   桌面/普通浏览器仍走 window.open。 */
+function openExternalUrl(url){
+  const s=String(url||'');
+  if(!/^https?:\/\//i.test(s)) return;
+  try{
+    if(window.Android && typeof window.Android.openExternal==='function'){
+      window.Android.openExternal(s);
+      return;
+    }
+  }catch(e){ /* 没桥接就走下面的兜底 */ }
+  window.open(s,'_blank','noopener');
+}
 function toast(msg, action){
   const t=$('#toast');
   if(!t) return;
@@ -236,9 +249,22 @@ const MapView = {
     this.showFallbackBanner();
   },
   showFallbackBanner(){
+    try{ if(localStorage.getItem('fm_amap_banner_dismissed')==='1') return; }catch(_){}
     let b=$('#mapBanner'); if(!b){ b=document.createElement('div'); b.id='mapBanner'; $('#map').appendChild(b); }
     b.className='map-banner';
-    b.textContent='未配置高德 Key：当前使用兜底地图（可正常显示、打点、查看记录）。POI 搜索 / 地址定位 / 驾车路线需配置 Key 后启用。';
+    b.textContent='';
+    const text=document.createElement('span');
+    text.textContent='未配置高德 Key：当前使用兜底地图（可正常显示、打点、查看记录）。POI 搜索 / 地址定位 / 驾车路线需配置 Key 后启用。';
+    const close=document.createElement('button');
+    close.type='button';
+    close.className='map-banner-x';
+    close.setAttribute('aria-label','关闭提示');
+    close.textContent='✕';
+    close.addEventListener('click', ()=>{
+      try{ localStorage.setItem('fm_amap_banner_dismissed','1'); }catch(_){}
+      b.remove();
+    });
+    b.append(text, close);
   },
   render(records){
     // 尊重"显示描点"开关：关闭时清空标记，仅保留底图
@@ -477,6 +503,7 @@ const App = {
       panel:'none',
       showMarkers:true,
       moreOpen:false,
+      searchOpen:false,
       /* 筛选面板：草稿态。改动只更新 filterDraft，点「应用」才写回 filters */
       filterOpen:false,
       filterDraft:{ ratingMin:0, ratingMax:null, priceMin:null, priceMax:null, tags:[], tagsMode:'all', drafts:'all', viewOnly:false },
@@ -532,7 +559,7 @@ const App = {
       return this.visibleRecords.slice(0,n);
     },
     /* 运行形态：设置面板里显示「安装版 / 绿色版 / 源码版」 */
-    modeText(){ return this.appMode==='installer' ? '安装版' : (this.appMode==='portable' ? '绿色版' : '源码版'); },
+    modeText(){ return this.appMode==='android' ? '安卓版' : (this.appMode==='installer' ? '安装版' : (this.appMode==='portable' ? '绿色版' : '源码版')); },
 
     /* 更新说明是 GitHub Release 的 markdown 原文，直接显示会露出
        **Full Changelog** 这种标记（用户截图踩过）；这里只做无害清洗，
@@ -755,6 +782,18 @@ const App = {
       }catch(e){ toast('加载失败：'+e.message); }
     },
     onSearch(){ clearTimeout(this._st); this._st=setTimeout(()=>this.loadRecords(),250); },
+    /* 窄屏（≤980px）顶栏只留搜索图标，点开后用浮层输入；宽屏直接聚焦原输入框 */
+    onSearchTap(e){
+      if(!window.matchMedia || !window.matchMedia('(max-width:980px)').matches) return;
+      e.preventDefault();
+      this.openMobileSearch();
+    },
+    openMobileSearch(){
+      this.moreOpen=false;
+      this.searchOpen=true;
+      this.$nextTick(()=>{ const el=this.$refs.mobileSearch; if(el) el.focus(); });
+    },
+    closeMobileSearch(){ this.searchOpen=false; },
     /* 列表滚动到底部前 240px，追加 60 条 */
     onListScroll(e){
       const el=e.target;
@@ -880,7 +919,7 @@ const App = {
     navTo(r){
       const url='https://uri.amap.com/marker?position='+r.lng+','+r.lat
         +'&name='+encodeURIComponent(r.name||'美食')+'&src=foodmap&coordinate=gaode&callnative=0';
-      window.open(url,'_blank','noopener');
+      openExternalUrl(url);
     },
     async setDetailStatus(s){
       const d=this.detail;
@@ -1089,6 +1128,13 @@ const App = {
     },
     _readURL(){
       const q=new URLSearchParams(location.search);
+      // 先把筛选恢复默认：URL 是完整的状态源，不带某个参数就表示「这一项没有筛选」。
+      // 只在参数存在时赋值，会让「后退」到更早的 URL 时残留上一次的筛选条件。
+      Object.assign(this.filters, {
+        keyword:'', sort:'updatedAt:desc', tags:[], tagsMode:'all',
+        ratingMin:0, ratingMax:null, checkin:'', viewOnly:false,
+        priceMin:null, priceMax:null, drafts:'all',
+      });
       if(q.get('view')==='list') this.panel='list';
       const st=q.get('status');
       if(['want','visited','favorite'].indexOf(st)>=0) this.filters.checkin=st;
@@ -1288,7 +1334,7 @@ const App = {
     },
     openReleasePage(){
       const url=(this.updateInfo&&this.updateInfo.htmlUrl)||'https://github.com/perry466/foodie-trail/releases';
-      window.open(url,'_blank','noopener');
+      openExternalUrl(url);
     },
     /* 应用内下载走的是 release-assets.githubusercontent.com，有些网络到不了那里，
        httpx 会连接超时。给一条「复制链接」的出路：丢进浏览器或下载工具往往能成。 */
@@ -1506,12 +1552,15 @@ const App = {
       this._syncDownload();
     },
     _initUpdate(){
+      // 安卓版由 APK 安装包更新，不查 GitHub、也不显示 Windows 的更新入口
+      if(this.appMode==='android') return;
       try{ this.autoUpdateCheck=localStorage.getItem('fm-auto-update')!=='0'; }catch(e){ this.autoUpdateCheck=true; }
       if(!this.autoUpdateCheck) return;
       let skip='';
       try{ skip=localStorage.getItem('fm-skip-version')||''; }catch(e){}
       // 延迟 2 秒：先让地图和清单把首屏请求跑完，不跟启动抢带宽
       setTimeout(async()=>{
+        if(this.appMode==='android') return;
         await this.checkUpdate(false);
         const info=this.updateInfo||{};
         if(info.ok && info.hasUpdate && info.latest && info.latest!==skip) this._showUpdateBanner();
@@ -1653,7 +1702,13 @@ const App = {
     },
     addTag(){
       const v=this.tagInput.trim();
-      if(v && !this.formTags.includes(v)) this.formTags.push(v);
+      if(!v){ this.tagInput=''; return; }
+      // 与后端 validate.normalize_tags 的上限保持一致（MAX_TAG_LEN=24 / MAX_TAGS=32）。
+      // 后端超限是静默丢弃（导入老备份时要兼容），所以前端必须先把住——
+      // 否则用户输完标签、保存后又消失，会以为程序吃掉了数据。
+      if(v.length>24){ toast('标签最多 24 个字'); return; }
+      if(this.formTags.length>=32 && !this.formTags.includes(v)){ toast('最多 32 个标签'); return; }
+      if(!this.formTags.includes(v)) this.formTags.push(v);
       this.tagInput='';
     },
     removeTag(i){ this.formTags.splice(i,1); },
@@ -1891,19 +1946,23 @@ const App = {
           // 避免"照片上传失败→用户再点保存→产生重复记录"
           this.form.id=rec.id;
         }
-        // 照片逐张上传/删除，失败的不丢弃，留在列表里等用户重试
-        const failed=[];
-        for(const f of this.formNewPhotos){
-          try{ await API.upload(recPath(rec.id)+'/photos',f); }
-          catch(e){ failed.push(f); }
-        }
-        this.formNewPhotos=failed;
+        // 顺序很重要：**先删后加**。
+        // 库里已有 9 张（上限）时，先上传会被"最多 9 张"直接 400 拒绝，
+        // 「删 1 张加 1 张」就得点两次保存才成功（第一次还提示上传失败）。
+        // 删除只动本机文件、几乎不会失败；上传才可能因图片本身失败，把风险大的放后面。
         const delFailed=[];
         for(const pid of this.formRemoved){
           try{ await API.del(photoPath(pid)); }
           catch(e){ delFailed.push(pid); }   // 删除失败要保留，否则照片仍留在库里、下次打开又冒出来
         }
         this.formRemoved=delFailed;
+        // 照片逐张上传，失败的不丢弃，留在列表里等用户重试
+        const failed=[];
+        for(const f of this.formNewPhotos){
+          try{ await API.upload(recPath(rec.id)+'/photos',f); }
+          catch(e){ failed.push(f); }
+        }
+        this.formNewPhotos=failed;
         if(failed.length||delFailed.length){
           const parts=[];
           if(failed.length) parts.push(`${failed.length} 张照片上传失败`);
@@ -1984,6 +2043,27 @@ const App = {
       window.location.href=`/api/export?mode=full&includeDrafts=1&${this._filterQuery(false)}`;
     },
 
+    /* Android 实体返回键：按「最上层浮层先关」的顺序退，全部关完返回 false 让原生退出。
+       与键盘 Escape 的行为保持一致，但不把浏览器历史当成浮层栈。 */
+    handleBack(){
+      const lb=$('#lightbox');
+      if(lb && !lb.classList.contains('hidden')){ closeLightbox(); return true; }
+      if(this.searchOpen){ this.closeMobileSearch(); return true; }
+      if(this.confirmBox.open){ this.closeConfirm(false); return true; }
+      if(this.pickingMap){ this.cancelPick(); return true; }
+      if(this.selectMode){ this.exitSelect(); return true; }
+      if(this.filterOpen){ this.filterOpen=false; return true; }
+      if(this.detailOpen){ this.closeDetail(); this._syncURL(); return true; }
+      if(this.moreOpen){ this.moreOpen=false; return true; }
+      if(this.settingsOpen||this.formOpen||this.dashOpen||this.importOpen){
+        this.settingsOpen=this.formOpen=this.dashOpen=this.importOpen=false;
+        this._syncURL();
+        return true;
+      }
+      if(this.panel!=='none'){ this.panel='none'; this._syncURL(); return true; }
+      return false;
+    },
+
     /* lightbox 桥接 */
     openLightbox(photos,i){ openLightbox(photos,i); },
   },
@@ -2000,6 +2080,8 @@ const App = {
     this._readURL();   // 支持 ?view=list&rating=4&tags=火锅 这样的深链接
     if(localStorage.getItem('fm-show-markers')==='0') this.showMarkers=false;
     bindLightbox();
+    /* 供 Android 壳的返回键调用；返回 true 表示这次返回被页面消费 */
+    window.__fmBack = () => this.handleBack();
     // 全局快捷键 & 点击外部关闭浮层
     document.addEventListener('keydown',e=>{
       if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
@@ -2012,6 +2094,7 @@ const App = {
         return;
       }
       const modalOpen=this.formOpen||this.settingsOpen||this.dashOpen||this.importOpen||this.confirmBox.open;
+      if(this.searchOpen && e.key==='Escape'){ this.closeMobileSearch(); return; }
       if(!modalOpen && this.panel==='list' && (e.key==='ArrowDown'||e.key==='ArrowUp')){
         e.preventDefault(); this._moveActive(e.key==='ArrowDown'?1:-1); return;
       }

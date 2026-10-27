@@ -1,3 +1,5 @@
 # 开发/测试依赖（运行应用本身不需要这些）
 # 安装：venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 pytest>=8.0
+# 静态检查。**锁死版本**：ruff 的规则集会随版本变化，不锁定的话 CI 会莫名变红。
+ruff==0.17.2

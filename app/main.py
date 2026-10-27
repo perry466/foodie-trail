@@ -19,17 +19,32 @@ from PIL import Image
 from pydantic import BaseModel, Field, field_validator
 
 from . import crypto, update
-from .coords import wgs84_to_gcj02, haversine
+from .coords import haversine, wgs84_to_gcj02
 from .db import get_conn, init_db
 from .pathconf import (
-    AMAP_REST, DATA_DIR, PHOTOS_DIR, PHOTO_MAX_BYTES,
-    PHOTO_MAX_COUNT, PHOTO_MAX_EDGE, PHOTO_QUALITY, STATIC_DIR,
+    AMAP_REST,
+    DATA_DIR,
+    PHOTO_MAX_BYTES,
+    PHOTO_MAX_COUNT,
+    PHOTO_MAX_EDGE,
+    PHOTO_QUALITY,
+    PHOTOS_DIR,
+    STATIC_DIR,
 )
 from .repository import SQLiteRepository
 from .validate import (
-    MAX_HOURS_LEN, MAX_NAME_LEN, MAX_PRICE, MAX_TEXT_LEN, MIN_PRICE,
-    build_record_payload, normalize_checkin, normalize_hours, normalize_price,
-    normalize_tags, normalize_text, validate_record,
+    MAX_HOURS_LEN,
+    MAX_NAME_LEN,
+    MAX_PRICE,
+    MAX_TEXT_LEN,
+    MIN_PRICE,
+    build_record_payload,
+    normalize_checkin,
+    normalize_hours,
+    normalize_price,
+    normalize_tags,
+    normalize_text,
+    validate_record,
 )
 from .version import VERSION
 
@@ -685,7 +700,11 @@ def amap_poi(keywords: str, city: str = "", location: str = ""):
     """输入提示（联想搜索）。返回已归一化的 {name, district, address, lng, lat}。"""
     key = _amap_web_key()
     if not key:
-        raise HTTPException(400, "未配置高德 Web 服务 Key：POI 搜索需要「Web 服务」类型的 Key，请在「设置 → ③ 后端 Web 服务 Key」里填写")
+        raise HTTPException(
+            400,
+            "未配置高德 Web 服务 Key：POI 搜索需要「Web 服务」类型的 Key，"
+            "请在「设置 → ③ 后端 Web 服务 Key」里填写",
+        )
     params = {"key": key, "keywords": keywords, "city": city}
     if location:
         params["location"] = location      # 传入当前坐标时，高德会按距离排序
@@ -716,7 +735,11 @@ def amap_poi(keywords: str, city: str = "", location: str = ""):
 def amap_geocode(address: str):
     key = _amap_web_key()
     if not key:
-        raise HTTPException(400, "未配置高德 Web 服务 Key：地址解析需要「Web 服务」类型的 Key，请在「设置 → ③ 后端 Web 服务 Key」里填写")
+        raise HTTPException(
+            400,
+            "未配置高德 Web 服务 Key：地址解析需要「Web 服务」类型的 Key，"
+            "请在「设置 → ③ 后端 Web 服务 Key」里填写",
+        )
     data = _amap_call(f"{AMAP_REST}/v3/geocode/geo", {"key": key, "address": address})
 
     geos = []
@@ -752,11 +775,13 @@ def amap_route(origin: str, destination: str):
 # ---------- 坐标转换 ----------
 @app.post("/api/coords/convert")
 def coord_convert(body: dict):
-    lng = body.get("lng"); lat = body.get("lat")
+    lng = body.get("lng")
+    lat = body.get("lat")
     if lng is None or lat is None:
         raise HTTPException(400, "需要 lng,lat")
     try:
-        lng = float(lng); lat = float(lat)
+        lng = float(lng)
+        lat = float(lat)
     except (TypeError, ValueError):
         raise HTTPException(400, "lng/lat 必须是数字")
     if not (math.isfinite(lng) and math.isfinite(lat)):
@@ -830,8 +855,15 @@ def _export_record(full: dict, mode: str) -> dict:
             full_path = _safe_photo_path(p["path"])
             if not full_path or not os.path.isfile(full_path):
                 continue
-            with open(full_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
+            try:
+                with open(full_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+            except OSError:
+                # isfile 与 open 之间有时间窗口：另一个标签页刚删了这张照片、
+                # 杀毒软件锁住文件、外部清理工具动了 photos/ 都会走到这里。
+                # 导出是流式的，此时响应头已经发出，异常会让用户拿到**截断的 JSON**
+                # —— 宁可这一张照片缺失（记录本身还在），也不能让整份备份失效。
+                continue
             rec["photos"].append({
                 "id": p["id"], "data": b64, "name": os.path.basename(full_path),
             })
@@ -862,14 +894,21 @@ def export_records(
     keyword: str = "", ratingMin: int = None, ratingMax: int = None,
     avgPriceMin: int = None, avgPriceMax: int = None,
     checkinStatus: str = "", tags: list[str] = Query(default=[]),
+    tagsAny: bool = False,
     includeDrafts: bool = True,
     sort: str = "updatedAt:desc",
 ):
-    """导出备份。includeDrafts 默认为 True：草稿也是用户数据，备份不应静默遗漏。"""
+    """导出备份。includeDrafts 默认为 True：草稿也是用户数据，备份不应静默遗漏。
+
+    `tagsAny` 必须和 `/api/records` 一样收下来：漏了它，导出会退化成「同时含全部标签」，
+    用户在「任一标签」下点导出会拿到一个更小的子集，而且没有任何提示——
+    对以本地备份为卖点的应用，这等于备份不可信。
+    """
     filters = {
         "keyword": keyword, "ratingMin": ratingMin, "ratingMax": ratingMax,
         "avgPriceMin": avgPriceMin, "avgPriceMax": avgPriceMax,
         "checkinStatus": checkinStatus, "includeDrafts": includeDrafts,
+        "tagsAny": tagsAny,
     }
     # 与 /api/records 同口径：tags 收重复参数，不按逗号拆
     if tags:

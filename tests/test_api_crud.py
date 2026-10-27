@@ -189,7 +189,7 @@ def test_sort_field_and_direction_are_whitelisted(client):
 
 def _price_records(client):
     """一批刚好卡在桶边界上的记录：29/30/59/60/99/100/199/200 + 一条无人均。"""
-    for i, p in enumerate([29, 30, 59, 60, 99, 100, 199, 200]):
+    for p in [29, 30, 59, 60, 99, 100, 199, 200]:
         _create(client, name=f"P{p}", avgPrice=p)
     _create(client, name="P-none", avgPrice=None)
 

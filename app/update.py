@@ -130,12 +130,31 @@ def detect_mode():
 
 # ---------- 缓存 ----------
 def _read_cache():
+    """读缓存；形状不对就当作「没有缓存」。
+
+    `check()` 的契约是「永远返回 dict，永远不抛异常」。而 `checkedAt` 和资产的 `size`
+    后面都会被 `int()` 转换——缓存文件被手工改坏、或写入时断电留下半截内容，
+    就会在 `check()` 的 try 外面抛 ValueError，接口直接 500，而且会一直错到缓存过期。
+    所以在这里把类型收敛掉，非法数据一律当没缓存（重新联网查一次是安全的）。
+    """
     try:
         with open(UPDATE_CACHE_PATH, encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else None
     except Exception:
         return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        data["checkedAt"] = int(data.get("checkedAt") or 0)
+        for key in ("setup", "zip"):
+            asset = data.get(key)
+            if isinstance(asset, dict):
+                asset["size"] = int(asset.get("size") or 0)
+            elif asset is not None:
+                data[key] = None
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return data
 
 
 def _write_cache(payload):

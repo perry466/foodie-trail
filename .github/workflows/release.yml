@@ -61,6 +61,9 @@ jobs:
       - name: Generate release notes from CHANGELOG
         run: python scripts/release_notes.py ${{ steps.ver.outputs.v }}
 
+      - name: Lint (ruff)
+        run: python -m ruff check app scripts tests
+
       - name: Run tests (backend)
         run: python -m pytest tests -q
 

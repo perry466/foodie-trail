@@ -1,0 +1,29 @@
+# 静态检查配置（ruff）。
+#
+# 只放 ruff 的配置，pytest 的配置仍在 pytest.ini，互不影响。
+# 接入前先做了一次全量体检：没有未定义名、重复定义这类真错误，
+# 剩下的都是风格项，所以下面的 ignore 都是有理由的，不是"跑不过就关掉"。
+
+[tool.ruff]
+line-length = 120          # 项目实际代码宽度；默认 88 会对现有代码报 168 条噪音
+target-version = "py310"   # 与 README 声明的 Python 3.10+ 对齐
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle
+    "F",   # pyflakes：未定义名、未使用导入、重复定义
+    "B",   # bugbear：可变默认参数、except 里裸 raise 等
+    "I",   # isort：导入分组与排序
+]
+ignore = [
+    # FastAPI 的声明式用法就是 `q: str = Query(default="")` / `f: UploadFile = File(...)`，
+    # 不是"在默认值里做函数调用"的 bug。
+    "B008",
+    # 这些 except 分支都把异常转换成了 HTTPException（响应体里只有中文提示），
+    # `raise ... from` 只影响服务器端 traceback 的展示，不值得为此改十几处业务代码。
+    "B904",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 这个用例要在导入 app 之前设 FOODMAP_DATA_DIR，所以导入不在文件顶部，是刻意的。
+"tests/test_startup_robustness.py" = ["E402"]

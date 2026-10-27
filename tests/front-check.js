@@ -146,6 +146,26 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   check('全部成功时清空待删除', app.formRemoved.length === 0);
   check('全部成功时表单关闭', app.formOpen === false);
 
+  // ---- 已满 9 张时「删 1 加 1」：必须先删后加 ----
+  // 先上传会被服务端「最多 9 张」直接 400，用户得点两次保存才成功。
+  const calls = [];
+  ctx.__API.sendForm = async () => ({ id: 'r2', name: 'x' });
+  ctx.__API.del = async (url) => { calls.push('del:' + url); return { ok: true }; };
+  ctx.__API.upload = async (url, f) => { calls.push('upload:' + (f && f.name)); return { ok: true }; };
+  app.form = { id: 'r2', name: 'x', rating: 3, price: '', checkin: '', note: '', draft: false, lat: 39.9, lng: 116.4, address: '' };
+  app.formTags = [];
+  app.formPhotos = [];
+  app.formRemoved = ['old1'];
+  app.formNewPhotos = [{ name: 'new1.jpg' }];
+  app.hours = {};
+  app.saving = false;
+  app.formOpen = true;
+  app.formMsg = '';
+  await app.saveForm();
+  const delIdx = calls.findIndex((c) => c.indexOf('del:') === 0);
+  const upIdx = calls.findIndex((c) => c.indexOf('upload:') === 0);
+  check('删1加1：先删旧照片再传新照片', delIdx >= 0 && upIdx > delIdx, calls.join(' | '));
+
   // ---- 人均价位：预览与后端同为 [下限, 上限) ----
   app.filters.keyword = '';
   const priceFilter = (min, max) => ({

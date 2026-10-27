@@ -14,7 +14,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -252,6 +251,7 @@ def test_seed_script_aborts_when_server_down(monkeypatch, tmp_path):
 def test_seed_script_import_has_no_side_effects():
     """旧版把 1000 次 POST 写在模块顶层，任何 import 都会打库。"""
     import importlib
+
     import seed_1000
 
     importlib.reload(seed_1000)          # 再执行一次模块级代码，不应发起请求

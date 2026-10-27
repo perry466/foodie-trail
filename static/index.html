@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <!-- 不锁缩放：禁用 user-scalable 会让低视力用户无法放大，也违反 WCAG 1.4.4 -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>美食地图 FoodMap</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261023d" />
+  <link rel="stylesheet" href="/css/style.css?v=20261027a" />
   <!-- 主题必须在首帧之前定下来：等 mounted() 再设 data-theme，深色模式用户会先看到
        一屏白底的开屏动画（这段内联脚本是唯一能在 CSS 应用前改根属性的地方）。 -->
   <script>try{if(localStorage.getItem('fm-theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
@@ -49,7 +49,7 @@
         <button :class="{on: dashOpen}" @click="openDash">看板</button>
       </nav>
 
-      <label class="tb-search" title="搜索（/）">
+      <label class="tb-search" title="搜索（/）" @click="onSearchTap">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input type="search" v-model="filters.keyword" @input="onSearch" placeholder="搜索店名 / 备注 / 标签" />
       </label>
@@ -80,7 +80,7 @@
           </button>
           <button class="more-item" @click="doExport">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            导出备份（含草稿）
+            导出备份（全部数据，含草稿）
           </button>
           <div class="more-label">管理</div>
           <button class="more-item" @click.stop="enterSelect">
@@ -94,6 +94,16 @@
         </div>
       </transition>
     </header>
+
+    <!-- 窄屏搜索：顶栏放不下输入框，点搜索图标后浮出整条搜索栏 -->
+    <transition name="pop">
+      <div v-if="searchOpen" class="mobile-search glass" role="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input ref="mobileSearch" type="search" v-model="filters.keyword" @input="onSearch"
+               @keydown.esc="closeMobileSearch" placeholder="搜索店名 / 备注 / 标签" />
+        <button type="button" class="ms-close" aria-label="关闭搜索" @click="closeMobileSearch">✕</button>
+      </div>
+    </transition>
 
     <!-- ===== 新版本提示条：非模态，不打断当前操作 ===== -->
     <transition name="pop">
@@ -462,14 +472,18 @@
                 <span class="upd-mode" v-if="appMode">{{ modeText }}</span>
               </p>
 
-              <div class="switch-row">
+              <p class="hint" v-if="appMode==='android'" style="margin-bottom:8px">
+                安卓版通过安装新版 APK 更新，应用内的记录与照片会保留。
+              </p>
+
+              <div class="switch-row" v-if="appMode && appMode!=='android'">
                 <div>
                   <div class="switch-name">启动时检查更新</div>
                 </div>
                 <button class="switch" :class="{on: autoUpdateCheck}" role="switch" aria-label="启动时检查更新" :aria-checked="autoUpdateCheck" :aria-pressed="autoUpdateCheck" @click="setAutoUpdateCheck(!autoUpdateCheck)"></button>
               </div>
 
-              <div class="upd-box" v-if="updateInfo.hasUpdate">
+              <div class="upd-box" v-if="appMode!=='android' && updateInfo.hasUpdate">
                 <div class="upd-head">
                   <b>可升级到 v{{ updateInfo.latest }}</b>
                   <span v-if="updateInfo.publishedAt">{{ fmtDate(updateInfo.publishedAt) }}</span>
@@ -503,12 +517,12 @@
                 <p class="hint" style="margin-top:8px" v-else>{{ updateModeHint }}</p>
               </div>
 
-              <div class="upd-acts" style="margin-top:10px">
+              <div class="upd-acts" style="margin-top:10px" v-if="appMode!=='android'">
                 <button class="btn-ghost" :disabled="updateBusy" @click="checkUpdate(true)">{{ updateBusy ? '检查中…' : '检查更新' }}</button>
                 <button class="btn-ghost" v-if="updateInfo.downloadUrl" @click="copyUpdateUrl">复制下载链接</button>
                 <button class="btn-ghost" @click="openReleasePage">前往 Release 页面</button>
               </div>
-              <div class="form-msg" style="margin-top:8px">{{ updateMsg }}</div>
+              <div class="form-msg" style="margin-top:8px" v-if="appMode!=='android'">{{ updateMsg }}</div>
             </div>
           </div>
         </div>
@@ -836,6 +850,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261023d"></script>
+  <script src="/js/app.js?v=20261027a"></script>
 </body>
 </html>

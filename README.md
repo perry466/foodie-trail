@@ -48,7 +48,7 @@
 
 - 🗺 **Map-first recording** — click the map to drop a pin, right-click / long-press to add with coordinates prefilled, or search an address; "locate me" uses browser geolocation.
 - 🏷 **Complete fields** — name, 1–5 stars, tags, weekly opening hours (multiple slots per day), average price per person, status (want / visited / favourite), note, up to 9 photos.
-- 🔍 **Precise filters** — keyword, exact star range, price buckets (`<30 / 30–60 / 60–100 / 100–200 / ≥200`), tags (match all or any), check-in status, current viewport, drafts. Filters live in the URL, so refresh and back/forward keep them.
+- 🔍 **Precise filters** — keyword, exact star range, price buckets (`<30 / 30–60 / 60–100 / 100–200 / ≥200`), tags (match all or any), check-in status, current viewport, drafts. Filters live in the URL, so refresh and shared links keep them.
 - 📋 **List that scales** — scroll-to-load (renders 60 at a time), sorting, keyboard `↑`/`↓` + `Enter`, multi-select with select-all / invert / clear, batch delete.
 - 📊 **Dashboard** — totals, visited rate, pending spots, average & median price, rating and price distribution, top tags, 12-month trend, data-quality hints, and "what to eat next" lists. Every chart drills down.
 - 🖼 **Photos** — EXIF orientation corrected, long edge resized to 1280 px and re-encoded as JPEG (target ≤ 500 KB), lightbox with arrow-key navigation.
@@ -290,7 +290,7 @@ Drafts are included by default, and the current filters still apply — clear th
 ## 🧪 6. Tests and Data Health
 
 ```bash
-python -m pytest tests -q      # 231 backend cases
+python -m pytest tests -q      # 240 backend cases
 node tests/front-check.js      # 56 front-end assertions (Node 18+)
 tests\run-tests.bat            # both, exit code 0 / 1 / 2 (2 = Node missing)
 ```

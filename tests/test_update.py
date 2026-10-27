@@ -834,7 +834,6 @@ def test_install_rehashes_package_and_refuses_mismatch(monkeypatch, tmp_path):
 
     这是最后一道防线——不一致就删文件让用户重下，绝不静默装一个被换过的包。
     """
-    import hashlib as _h
 
     target = tmp_path / "FoodieTrail-9.9.9-windows-x64-setup.exe"
     target.write_bytes(b"tampered" + b"!" * 12)   # 20 字节，与 _release() 的 size 一致
@@ -874,3 +873,37 @@ def test_install_refuses_cache_without_sha256(monkeypatch, tmp_path):
     assert e.value.status == 409
     assert "校验值" in e.value.message
     assert target.exists()                     # 文件没被动过，留给用户手动处置
+
+
+@pytest.mark.parametrize("bad_content", [
+    '{"checkedAt": "昨天"}',                     # 时间戳被写成中文
+    '{"checkedAt": 123, "setup": {"size": "很大"}}',  # 资产大小不是数字
+    '{"checkedAt": 123, "setup": "不是字典"}',      # 资产本身形状不对
+    '[1, 2, 3]',                                  # 顶层不是对象
+    'not json at all',                            # 根本不是 JSON
+    '',                                           # 空文件（写到一半断电）
+])
+def test_corrupt_cache_never_breaks_check(bad_content, tmp_path, monkeypatch):
+    """缓存被写坏不能让 check() 抛异常。
+
+    契约是「永远返回 dict，永远不抛异常」。`checkedAt` 与资产 `size` 后面都会 int()，
+    以前这些转换在 try 外面：缓存一旦坏了，接口就 500，而且会一直错到缓存过期。
+    """
+    cache_file = tmp_path / "update.json"
+    cache_file.write_text(bad_content, encoding="utf-8")
+    monkeypatch.setattr(upd, "UPDATE_CACHE_PATH", str(cache_file))
+
+    # 要么当没缓存，要么返回一个类型已收敛的 dict（checkedAt 一定是 int）
+    cache = upd._read_cache()
+    assert cache is None or isinstance(cache, dict)
+    if isinstance(cache, dict):
+        assert isinstance(cache.get("checkedAt"), int)
+
+    # 联网也失败时，check() 必须给出 dict 而不是抛异常
+    monkeypatch.setattr(
+        upd, "_fetch_latest",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("网络不通")),
+    )
+    result = upd.check(force=False)
+    assert isinstance(result, dict)
+    assert result.get("ok") is False

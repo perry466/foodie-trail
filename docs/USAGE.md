@@ -143,7 +143,7 @@ Details worth knowing:
 
 - The filter panel is a **draft**: changes only update a local copy and show "N places match" as an estimate; nothing is fetched until you press **Apply**.
 - Applied conditions appear as chips; each chip can be removed individually, and *Clear all* resets everything including the keyword.
-- Conditions are written to the URL (`?rating=4&tags=火锅&drafts=hide`), so refresh, bookmarks and back/forward all preserve the state.
+- Conditions are written to the URL (`?rating=4&tags=火锅&drafts=hide`), so refresh, bookmarks and shared links all restore the state. Note that changing a filter **replaces** the current history entry instead of pushing a new one: pressing Back takes you out of the app rather than stepping back through your filters one by one.
 - `Esc` closes the topmost layer (confirm dialog → map picker → select mode → filter panel → detail → list) and keeps the URL in sync.
 
 ---

@@ -138,3 +138,32 @@ def test_dirty_tags_rows_do_not_break_filter(client):
     # 不带标签筛选也照常返回（脏行不炸列表）
     r = client.get("/api/records")
     assert r.status_code == 200, r.text
+
+
+def _export_names(client, tags, tags_any=False):
+    from urllib.parse import quote
+    qs = "&".join(f"tags={quote(t)}" for t in tags)
+    extra = "&tagsAny=1" if tags_any else ""
+    r = client.get(f"/api/export?{qs}{extra}")
+    assert r.status_code == 200, r.text
+    return [row["name"] for row in r.json()["records"]]
+
+
+def test_export_honours_tags_any_mode(client):
+    """导出必须与列表同口径。
+
+    回归（2026-10-26 复查）：`export_records()` 的签名里漏了 `tagsAny`，FastAPI 对未知
+    查询参数是静默忽略的，于是「任一标签」导出退化成「全部标签」——用户以为导出的是
+    当前子集，实际拿到的是交集，条数更少且没有任何提示。
+    """
+    _create(client, "只有A", ["A"])
+    _create(client, "只有B", ["B"])
+    _create(client, "A和B都有", ["A", "B"])
+    everyone = sorted(["只有A", "只有B", "A和B都有"])
+
+    assert sorted(_list_multi(client, ["A", "B"], tags_any=True)) == everyone
+    assert sorted(_list_multi(client, ["A", "B"], tags_any=False)) == ["A和B都有"]
+
+    # 核心：导出的集合必须和列表一致（修复前 ANY 只导出 1 条）
+    assert sorted(_export_names(client, ["A", "B"], tags_any=True)) == everyone
+    assert sorted(_export_names(client, ["A", "B"], tags_any=False)) == ["A和B都有"]

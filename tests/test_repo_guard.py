@@ -9,7 +9,6 @@ import pytest
 
 import repo_guard
 
-
 CORE_FILES = [
     "app/main.py", "app/repository.py", "app/validate.py", "app/crypto.py", "app/db.py",
     "app/pathconf.py", "app/coords.py", "app/__init__.py",
