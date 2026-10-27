@@ -46,6 +46,12 @@ HTML_RELEASES = f"https://github.com/{REPO}/releases"
 # 免认证接口 60 次/小时/IP 的限额（一天开 10 次应用也只有 10 次请求，远低于限额）。
 # 曾经用 6 小时，结果刚发布的版本最多 6 小时都提示不出来。
 CACHE_TTL = 30 * 60
+# 「已是最新」这个结论的保鲜期要短得多。
+# 用户往往是照着提示升到 latest 的：装完之后缓存里的 latest 就等于当前版本，
+# 这条缓存已经没有信息量了，却会在 30 分钟里继续挡住下一次发版。
+# 实测踩过：10:12 查到 2.0.7 并升级 → 10:31 发布 2.0.8 → 10:37 启动仍被判「已是最新」，
+# 必须手动点一次「检查更新」（force）才看到新版。
+NO_UPDATE_TTL = 5 * 60
 # 检查用短超时：宁可这次不提示，也不能让启动变慢。
 CHECK_TIMEOUT = 4.0
 # 下载用长读超时：单个 chunk 之间允许停顿，整体不设上限（大小另有硬上限）。
@@ -494,8 +500,14 @@ def check(force=False):
     """检查更新。永远返回 dict，永远不抛异常。"""
     cache = _read_cache()
     now = time.time()
-    if not force and cache and 0 <= now - int(cache.get("checkedAt") or 0) < CACHE_TTL:
-        return _build_result(cache, cached=True)
+    if not force and cache:
+        age = now - int(cache.get("checkedAt") or 0)
+        cached_latest = cache.get("latest") or ""
+        # 缓存说「有比当前更新的版本」→ 值得信满 30 分钟（重查结果不会变，纯浪费额度）；
+        # 缓存说「已是最新」→ 只信 5 分钟（这个结论随时会因为新发版而过时）。
+        newer = bool(parse_version(cached_latest)) and compare_versions(cached_latest, VERSION) > 0
+        if 0 <= age < (CACHE_TTL if newer else NO_UPDATE_TTL):
+            return _build_result(cache, cached=True)
     try:
         fresh = _fetch_latest()
     except Exception as e:

@@ -907,3 +907,61 @@ def test_corrupt_cache_never_breaks_check(bad_content, tmp_path, monkeypatch):
     result = upd.check(force=False)
     assert isinstance(result, dict)
     assert result.get("ok") is False
+
+
+def _put_cache(cache_file, latest, minutes_ago):
+    payload = {
+        "checkedAt": int(time.time() - minutes_ago * 60),
+        "latest": latest,
+        "tag": "v" + latest,
+        "notes": "",
+        "publishedAt": "",
+        "htmlUrl": "https://example.invalid/releases",
+        "setup": None,
+        "zip": None,
+    }
+    cache_file.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_no_update_cache_expires_after_five_minutes(tmp_path, monkeypatch):
+    """「已是最新」的缓存只保鲜 5 分钟，「有新版」才给满 30 分钟。
+
+    回归（2026-10-27 真机踩到）：用户照提示升到 latest 后，缓存里 latest == 当前版本，
+    却仍有 30 分钟有效期。于是刚发布的新版在启动时看不到提示——
+    必须手动点一次「检查更新」（force=1）绕过缓存才行。
+    """
+    cache_file = tmp_path / "update.json"
+    monkeypatch.setattr(upd, "UPDATE_CACHE_PATH", str(cache_file))
+
+    calls = []
+
+    def fake_fetch():
+        calls.append(1)
+        return {
+            "checkedAt": int(time.time()), "latest": "9.9.9", "tag": "v9.9.9",
+            "notes": "x", "publishedAt": "", "htmlUrl": "https://example.invalid",
+            "setup": None, "zip": None,
+        }
+
+    monkeypatch.setattr(upd, "_fetch_latest", fake_fetch)
+
+    # 1) 缓存说「已是最新」，刚查过 1 分钟 -> 用缓存，不联网
+    _put_cache(cache_file, VERSION, 1)
+    monkeypatch.setattr(upd, "_read_cache", lambda: json.loads(cache_file.read_text(encoding="utf-8")))
+    r = upd.check(force=False)
+    assert r["cached"] is True
+    assert not calls, "1 分钟内的「已是最新」缓存应该直接命中"
+
+    # 2) 同样的结论，但已经 10 分钟 -> 超过 5 分钟保鲜期，必须重查
+    _put_cache(cache_file, VERSION, 10)
+    r = upd.check(force=False)
+    assert calls, "「已是最新」的缓存超过 5 分钟必须重新联网检查"
+    assert r["cached"] is False
+    assert r["latest"] == "9.9.9"
+
+    # 3) 缓存说「有新版」，20 分钟前 -> 仍可信（30 分钟有效期），省掉一次请求
+    calls.clear()
+    _put_cache(cache_file, "9.9.9", 20)
+    r = upd.check(force=False)
+    assert r["cached"] is True
+    assert not calls, "「有新版」的缓存 30 分钟内不该重复请求"
