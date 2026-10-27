@@ -368,6 +368,21 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   check('点 ✕ 记录忽略版本且收起横幅', store['fm-skip-version'] === '9.9.10' && app.updateBanner === false,
     store['fm-skip-version']);
 
+  // ---- 配色切换：写 data-accent、持久化、不关菜单 ----
+  const accAttrs = {};
+  ctx.document.documentElement = {
+    getAttribute: (k) => (k in accAttrs ? accAttrs[k] : null),
+    setAttribute: (k, v) => { accAttrs[k] = v; },
+  };
+  app.moreOpen = true;
+  app.setAccent('grape');
+  check('配色写入 data-accent', accAttrs['data-accent'] === 'grape', String(accAttrs['data-accent']));
+  check('配色持久化到 fm-accent',
+    ctx.localStorage.getItem('fm-accent') === 'grape', String(ctx.localStorage.getItem('fm-accent')));
+  check('配色切换不关闭菜单（方便连着试）', app.moreOpen === true);
+  check('配色共 5 套且默认辣椒红',
+    app.accents.length === 5 && app.accents[0].key === 'coral', String(app.accents.length));
+
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));
   if (fail.length) {

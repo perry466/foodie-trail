@@ -34,6 +34,14 @@ The top bar switches between **Map · List · Dashboard**, followed by search, *
 | 📋 **List** | Filter, sort, compare, batch-delete |
 | 📊 **Dashboard** | See your taste in aggregate, then drill into any chart |
 
+**Appearance**: the **More** menu switches light/dark first, then a row of five dots changes the
+accent color — Chilli Red (default), Mango Orange, Matcha Green, Sea Salt Blue, Grape Purple.
+
+Only the accent changes: buttons, icons, selected states, map pins and rating bars follow it.
+**Warning colors never follow** — the "no API key" banner, form errors and the delete button stay
+red on purpose; turning them green would read as "all good". The choice is stored in the browser
+(not synced across machines), and clicking a dot keeps the menu open so you can try a few in a row.
+
 ---
 
 ## 🗺 3. Map

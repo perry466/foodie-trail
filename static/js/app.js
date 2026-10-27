@@ -503,6 +503,16 @@ const App = {
       tagQuery:'',
       facetRecords:[], facetReady:false,
       themeName:'浅色',
+      /* 配色方案：只换主色（--primary 一组变量），明暗主题独立于它。
+         颜色值与 style.css 里 [data-accent=...] 保持一致，改一处要同时改两处。 */
+      accent:'coral',
+      accents:[
+        { key:'coral',  name:'辣椒红', color:'#f0502f' },
+        { key:'mango',  name:'芒果橙', color:'#e8821a' },
+        { key:'matcha', name:'抹茶绿', color:'#2f9e63' },
+        { key:'ocean',  name:'海盐蓝', color:'#2f7fd8' },
+        { key:'grape',  name:'葡萄紫', color:'#7b5cd6' },
+      ],
       priceBuckets:PRICE_BUCKETS,
       settingsOpen:false, formOpen:false, detailOpen:false, dashOpen:false, importOpen:false,
       confirmBox:{ open:false, title:'', message:'', ok:'确认', danger:false, busy:false, onlyOk:false },
@@ -724,6 +734,13 @@ const App = {
       try{ localStorage.setItem('fm-theme',next); }catch{}
       this.themeName = next==='dark' ? '深色' : '浅色';
       this.moreOpen=false;
+    },
+
+    /* 配色：不关菜单，方便连着点几个看效果（菜单本身是玻璃层，主色变化立刻可见） */
+    setAccent(k){
+      this.accent=k;
+      document.documentElement.setAttribute('data-accent',k);
+      try{ localStorage.setItem('fm-accent',k); }catch{}
     },
 
     /* 显示选项：地图描点开关 */
@@ -2045,6 +2062,8 @@ const App = {
   mounted(){
     const t=localStorage.getItem('fm-theme'); if(t) document.documentElement.setAttribute('data-theme',t);
     this.themeName = t==='dark' ? '深色' : '浅色';
+    const ac=localStorage.getItem('fm-accent');
+    if(ac){ this.accent=ac; document.documentElement.setAttribute('data-accent',ac); }
     document.body.classList.toggle('fm-list-open', this.panel==='list');
     this._readURL();   // 支持 ?view=list&rating=4&tags=火锅 这样的深链接
     if(localStorage.getItem('fm-show-markers')==='0') this.showMarkers=false;

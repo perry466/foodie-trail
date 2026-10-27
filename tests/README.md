@@ -14,13 +14,13 @@ venv\Scripts\python.exe -m pytest tests -q
 
 预期输出：`241 passed`。
 
-### 2. 前端（Node 断言，56 项）
+### 2. 前端（Node 断言，61 项）
 
 ```bat
 node tests\front-check.js
 ```
 
-预期输出：`通过 56 项` 且退出码为 0。缺 Node 时先装 Node 18+；Windows 上一般已有 `node`。
+预期输出：`通过 61 项` 且退出码为 0。缺 Node 时先装 Node 18+；Windows 上一般已有 `node`。
 
 ### 3. 一条命令全跑
 

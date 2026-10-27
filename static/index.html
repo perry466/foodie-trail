@@ -8,10 +8,11 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261027b" />
+  <link rel="stylesheet" href="/css/style.css?v=20261027c" />
   <!-- 主题必须在首帧之前定下来：等 mounted() 再设 data-theme，深色模式用户会先看到
-       一屏白底的开屏动画（这段内联脚本是唯一能在 CSS 应用前改根属性的地方）。 -->
-  <script>try{if(localStorage.getItem('fm-theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}</script>
+       一屏白底的开屏动画（这段内联脚本是唯一能在 CSS 应用前改根属性的地方）。
+       配色同理：晚一步就会先闪一下默认的辣椒红。 -->
+  <script>try{var t=localStorage.getItem('fm-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');var a=localStorage.getItem('fm-accent');if(a)document.documentElement.setAttribute('data-accent',a);}catch(e){}</script>
 </head>
 <body>
   <!-- 开屏动画：纯静态层，先于 Vue 绘制，避免首屏白闪；
@@ -69,6 +70,15 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             主题：{{ themeName }}
           </button>
+          <div class="accent-pick">
+            <span class="accent-pick-label">配色</span>
+            <div class="accent-dots">
+              <button v-for="a in accents" :key="a.key" type="button" class="accent-dot"
+                      :class="{on: accent===a.key}" :style="{background:a.color}"
+                      :title="a.name" :aria-label="a.name" :aria-pressed="accent===a.key"
+                      @click.stop="setAccent(a.key)"></button>
+            </div>
+          </div>
           <button class="more-item" @click.stop="setShowMarkers(!showMarkers); moreOpen=false">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
             地图描点：{{ showMarkers ? '显示' : '隐藏' }}
@@ -846,6 +856,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261027b"></script>
+  <script src="/js/app.js?v=20261027c"></script>
 </body>
 </html>

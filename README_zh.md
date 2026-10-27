@@ -289,7 +289,7 @@ data/
 
 ```bash
 python -m pytest tests -q      # 后端 241 例
-node tests/front-check.js      # 前端 56 项断言（Node 18+）
+node tests/front-check.js      # 前端 61 项断言（Node 18+）
 tests\run-tests.bat            # 两条一起跑，退出码 0 / 1 / 2（2 = 缺 Node）
 ```
 
