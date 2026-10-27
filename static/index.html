@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="/favicon.ico" sizes="any" />
   <script src="/lib/vue/vue.global.min.js"></script>
-  <link rel="stylesheet" href="/css/style.css?v=20261027e" />
+  <link rel="stylesheet" href="/css/style.css?v=20261027f" />
   <!-- 主题必须在首帧之前定下来：等 mounted() 再设 data-theme，深色模式用户会先看到
        一屏白底的开屏动画（这段内联脚本是唯一能在 CSS 应用前改根属性的地方）。
        配色同理：晚一步就会先闪一下默认的辣椒红。 -->
@@ -714,17 +714,22 @@
               <div class="dash-2col">
                 <section class="dash-panel">
                   <h4>状态构成 <small>点图例筛到列表</small></h4>
-                  <div class="stack-bar">
-                    <span class="seg s-visited" :style="{width:(dash.checkin.visited*100/dash.total)+'%'}"></span>
-                    <span class="seg s-want" :style="{width:(dash.checkin.want*100/dash.total)+'%'}"></span>
-                    <span class="seg s-fav" :style="{width:(dash.checkin.favorite*100/dash.total)+'%'}"></span>
+                  <div class="donut-row">
+                    <div class="donut-box">
+                      <svg viewBox="0 0 120 120" class="donut" aria-hidden="true">
+                        <circle class="dn-track" cx="60" cy="60" r="46"></circle>
+                        <circle v-for="s in dashDonut" :key="s.key" class="dn-seg" cx="60" cy="60" r="46"
+                                :style="{stroke:s.color, strokeDasharray:s.dash, strokeDashoffset:s.offset}"
+                                @click="dashDrill('checkin', s.key)"></circle>
+                      </svg>
+                      <div class="donut-mid"><b>{{ dash.total }}</b><span>条</span></div>
+                    </div>
+                    <div class="legend legend-col">
+                      <button class="lg" @click="dashDrill('checkin','visited')"><i class="s-visited"></i>去过<b>{{ dash.checkin.visited }}</b></button>
+                      <button class="lg" @click="dashDrill('checkin','want')"><i class="s-want"></i>想去<b>{{ dash.checkin.want }}</b></button>
+                      <button class="lg" @click="dashDrill('checkin','favorite')"><i class="s-fav"></i>收藏<b>{{ dash.checkin.favorite }}</b></button>
+                    </div>
                   </div>
-                  <div class="legend">
-                    <button class="lg" @click="dashDrill('checkin','visited')"><i class="s-visited"></i>去过<b>{{ dash.checkin.visited }}</b></button>
-                    <button class="lg" @click="dashDrill('checkin','want')"><i class="s-want"></i>想去<b>{{ dash.checkin.want }}</b></button>
-                    <button class="lg" @click="dashDrill('checkin','favorite')"><i class="s-fav"></i>收藏<b>{{ dash.checkin.favorite }}</b></button>
-                  </div>
-                  <p class="dash-tip">近 12 个月录入 {{ dash.yearTotal }} 条，平均每月 {{ dash.perMonth }} 条；待拔草 {{ dash.pending }} 家，其中 {{ dash.pendingHighRated }} 家评分≥4。</p>
                 </section>
 
                 <section class="dash-panel">
@@ -763,44 +768,48 @@
                 </section>
               </div>
 
-              <!-- 月度趋势 -->
+              <!-- 月度趋势：时间序列用面积图，比 12 根柱子更容易看出走势 -->
               <section class="dash-panel">
-                <h4>近 12 个月新增 <small>峰值 {{ dash.monthPeak }} 条</small></h4>
-                <div class="month-bars">
-                  <div class="mb" v-for="m in dash.months" :key="m.key" :title="m.key+' · '+m.count+' 条'">
-                    <span class="mb-n">{{ m.count || '' }}</span>
-                    <span class="mb-col"><i :class="{peak: m.count && m.count===dash.monthPeak}" :style="{height: barH(m.count, dashMonthMax)}"></i></span>
-                    <span class="mb-x">{{ m.label }}</span>
+                <h4>近 12 个月新增 <small>峰值 {{ dash.monthPeak }} 条 · 平均每月 {{ dash.perMonth }} 条</small></h4>
+                <div class="area-wrap">
+                  <svg viewBox="0 0 600 110" preserveAspectRatio="none" class="area-svg" aria-hidden="true">
+                    <defs>
+                      <linearGradient id="dashAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="var(--primary)" stop-opacity=".30"></stop>
+                        <stop offset="100%" stop-color="var(--primary)" stop-opacity=".02"></stop>
+                      </linearGradient>
+                    </defs>
+                    <path :d="dashAreaPath" fill="url(#dashAreaGrad)"></path>
+                    <path :d="dashAreaLine" fill="none" stroke="var(--primary)" stroke-width="2"
+                          vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"></path>
+                  </svg>
+                  <div class="area-x">
+                    <span v-for="m in dash.months" :key="m.key" :class="{peak: m.count && m.count===dash.monthPeak}">
+                      <b v-if="m.count">{{ m.count }}</b>
+                      <em>{{ m.label }}</em>
+                    </span>
                   </div>
                 </div>
               </section>
 
-              <!-- 行动清单 -->
-              <div class="dash-2col">
-                <section class="dash-panel">
-                  <h4>高分待拔草 <small>评分≥4 且还没去</small></h4>
-                  <ul class="action-list">
-                    <li v-for="a in dash.actions.topRatedWant" :key="a.id" @click="dashOpenRecord(a.id)">
-                      <span class="al-star">{{ '★'.repeat(a.rating) }}</span>
-                      <span class="al-name">{{ a.name }}</span>
-                      <span class="al-days">{{ a.days }} 天</span>
-                    </li>
-                    <li class="al-empty" v-if="!dash.actions.topRatedWant.length">暂无——想去清单里还没有 4 星以上的店</li>
-                  </ul>
-                </section>
-
-                <section class="dash-panel">
-                  <h4>积压最久 <small>想去/收藏但一直没去</small></h4>
-                  <ul class="action-list">
-                    <li v-for="a in dash.actions.oldestWant" :key="a.id" @click="dashOpenRecord(a.id)">
-                      <span class="al-star">{{ '★'.repeat(a.rating) }}{{ '☆'.repeat(5-a.rating) }}</span>
-                      <span class="al-name">{{ a.name }}</span>
-                      <span class="al-days">{{ a.days }} 天</span>
-                    </li>
-                    <li class="al-empty" v-if="!dash.actions.oldestWant.length">暂无待拔草记录</li>
-                  </ul>
-                </section>
-              </div>
+              <!-- 待拔草：原来「高分待拔草 / 积压最久」是两张几乎完全重复的列表，合并成一张 + 排序切换 -->
+              <section class="dash-panel">
+                <div class="dash-panel-head">
+                  <h4>待拔草 <small>共 {{ dash.pending }} 家</small></h4>
+                  <div class="seg-ctl">
+                    <button type="button" :class="{on: wantSort==='rating'}" @click="wantSort='rating'">按评分</button>
+                    <button type="button" :class="{on: wantSort==='days'}" @click="wantSort='days'">按积压</button>
+                  </div>
+                </div>
+                <ul class="action-list">
+                  <li v-for="a in dashWantList" :key="a.id" @click="dashOpenRecord(a.id)">
+                    <span class="al-star">{{ '★'.repeat(a.rating) }}{{ '☆'.repeat(5-a.rating) }}</span>
+                    <span class="al-name">{{ a.name }}</span>
+                    <span class="al-days">{{ a.days }} 天</span>
+                  </li>
+                  <li class="al-empty" v-if="!dashWantList.length">暂无待拔草记录</li>
+                </ul>
+              </section>
 
               <!-- 数据健康度 -->
               <section class="dash-panel">
@@ -856,6 +865,6 @@
     <div class="lb-counter" id="lbCounter"></div>
   </div>
 
-  <script src="/js/app.js?v=20261027e"></script>
+  <script src="/js/app.js?v=20261027f"></script>
 </body>
 </html>

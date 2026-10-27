@@ -71,17 +71,31 @@ red on purpose; turning them green would read as "all good". The choice is store
 
 ## 📊 5. Dashboard
 
-Twelve aggregates in one screen: total records, visited rate, pending places, average & median price, status split, rating distribution, price buckets, top tags, a 12-month trend, photo coverage, data-quality hints, and two "what to eat next" lists.
+Everything in one screen: **total / visited rate / pending / median price** cards, then **status split**
+(donut), **rating distribution** (bars), **price buckets** and **top tags** (horizontal bars),
+a **12-month trend** (area chart), plus a "what to eat next" list and data-quality hints.
+
+Chart types follow the data instead of defaulting to bars:
+
+| Data | Chart | Why |
+| --- | --- | --- |
+| Status split | donut | It's about **proportion** — three segments read at a glance, and the total fits in the middle |
+| Rating distribution | bars | It's about **comparison** — five bars show which star level dominates |
+| Price / tags | horizontal bars | It's about **ranking** — long labels fit, largest-first is obvious |
+| Monthly trend | area | It's about **movement** — 12 points as a line beats 12 bars, and empty months don't leave a row of blank columns |
 
 **Every chart is a filter.** Click:
 
 | Chart | Result |
 | --- | --- |
-| Status slice | list filtered to that status |
+| A donut segment / legend | list filtered to that status |
 | A star bar | exact star range (4★ means 4, not ≥ 4) |
 | A price bucket | that bucket, upper bound exclusive |
 | A tag bar | that single tag |
-| A record in the action list | its detail |
+| A record in the pending list | its detail |
+
+**Pending** has a **by rating / by age** sort toggle — these used to be two nearly identical lists
+(one sorted by stars, one by days neglected); now it's one list with two orderings.
 
 Drilling clears any leftover keyword / tag / draft / viewport filters first, and switches the draft scope to *exclude drafts* — because the dashboard itself never counts drafts. That keeps "4★ = 42" consistent with what you see after clicking.
 

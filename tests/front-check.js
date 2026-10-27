@@ -404,6 +404,39 @@ const ids = (rows) => (rows || []).map((r) => r.id).join(',');
   check('装完不瞬间跳到 100%（走冲刺补齐）', app.installPercent === 88, String(app.installPercent));
   check('冲刺间隔 ≤200ms', sprintMs > 0 && sprintMs <= 200, sprintMs + 'ms');
 
+  // ---- 看板：环形分段 / 待拔草合并 ----
+  const C = 2 * Math.PI * 46;   // 与 dashDonut 里的半径一致
+  app.dash = {
+    total: 100,
+    monthPeak: 5,
+    months: [{ key: '2026-09', label: '9月', count: 0 }, { key: '2026-10', label: '10月', count: 5 }],
+    checkin: { visited: 50, want: 30, favorite: 20 },
+    actions: {
+      topRatedWant: [{ id: 'a', rating: 5, days: 10 }, { id: 'b', rating: 4, days: 20 }],
+      oldestWant: [{ id: 'a', rating: 5, days: 10 }, { id: 'c', rating: 3, days: 99 }],
+    },
+  };
+  const seg = ctx.__App.computed.dashDonut.call(app);
+  const arcSum = seg.reduce((s, x) => s + parseFloat(x.dash.split(' ')[0]), 0);
+  check('环形图分 3 段且弧长合计等于周长',
+    seg.length === 3 && Math.abs(arcSum - C) < 0.01,
+    seg.length + ' 段 / ' + arcSum.toFixed(2) + ' vs ' + C.toFixed(2));
+  check('环形第 2 段起点接在第 1 段末尾',
+    Math.abs(parseFloat(seg[1].offset) + parseFloat(seg[0].dash.split(' ')[0])) < 0.01,
+    String(seg[1].offset));
+
+  const want = () => ctx.__App.computed.dashWantList.call(app);
+  check('待拔草两张榜合并去重', want().length === 3, String(want().length));
+  app.wantSort = 'days';
+  check('按积压排序时天数最多的在前', want()[0].id === 'c', want()[0].id);
+  app.wantSort = 'rating';
+  check('按评分排序时星级最高的在前', want()[0].id === 'a', want()[0].id);
+
+  const pts = ctx.__App.computed.dashAreaPoints.call(app);
+  check('面积图首末点覆盖整个 viewBox',
+    pts.length === 2 && pts[0].x === 0 && pts[1].x === 600,
+    JSON.stringify(pts.map((p) => p.x)));
+
   console.log('通过 ' + pass.length + ' 项');
   pass.forEach((n) => console.log('  ok  ' + n));
   if (fail.length) {

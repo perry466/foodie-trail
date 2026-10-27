@@ -546,9 +546,18 @@ button{ font-family:inherit; cursor:pointer; }
 .dash-panel h4 small{ font-weight:400; font-size:11.5px; color:var(--muted); }
 
 /* 状态构成：堆叠条 + 图例 */
-.stack-bar{ display:flex; height:14px; border-radius:7px; overflow:hidden; background:rgba(15,23,42,.06); }
-[data-theme="dark"] .stack-bar{ background:rgba(255,255,255,.08); }
-.seg{ display:block; height:100%; }
+/* 状态构成：环形图（占比用环形比堆叠条直观，中间还能放总数） */
+.donut-row{ display:flex; align-items:center; gap:20px; padding:4px 0 2px; }
+.donut-box{ position:relative; width:118px; height:118px; flex:none; }
+.donut{ width:100%; height:100%; transform:rotate(-90deg); }
+.dn-track{ fill:none; stroke:rgba(15,23,42,.06); stroke-width:14; }
+[data-theme="dark"] .dn-track{ stroke:rgba(255,255,255,.08); }
+.dn-seg{ fill:none; stroke-width:14; cursor:pointer; transition:opacity .15s ease; }
+.dn-seg:hover{ opacity:.72; }
+.donut-mid{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none; }
+.donut-mid b{ font-size:23px; line-height:1; }
+.donut-mid span{ font-size:11px; color:var(--muted); margin-top:2px; }
+.legend-col{ flex-direction:column; align-items:flex-start; gap:7px; margin-top:0; }
 .s-visited{ background:#2f9e6e; }
 .s-want{ background:#f0a02f; }
 .s-fav{ background:#4a7bd8; }
@@ -577,15 +586,32 @@ button{ font-family:inherit; cursor:pointer; }
 .hb-track i{ display:block; height:100%; border-radius:5px; background:var(--primary); transition:opacity .15s; }
 .hb-n{ font-size:11.5px; color:var(--muted); text-align:right; white-space:nowrap; }
 
-/* 月度趋势 */
-.month-bars{ display:flex; align-items:flex-end; gap:6px; height:128px; }
-.mb{ flex:1; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:3px; }
-.mb-n{ height:13px; font-size:10.5px; color:var(--muted); }
-.mb-col{ flex:1; width:100%; display:flex; align-items:flex-end; }
-.mb-col i{ display:block; width:100%; border-radius:4px 4px 2px 2px; background:#c9d2dc; }
-[data-theme="dark"] .mb-col i{ background:#3a4048; }
-.mb-col i.peak{ background:var(--primary); }
-.mb-x{ font-size:10.5px; color:var(--muted); }
+/* 月度趋势：面积图（时间序列用折线/面积比 12 根柱子更容易看出走势） */
+.area-wrap{ margin-top:10px; }
+.area-svg{ display:block; width:100%; height:110px; }
+.area-x{ display:flex; margin-top:4px; }
+.area-x span{ flex:1; display:flex; flex-direction:column; align-items:center; gap:1px; font-size:10px; color:var(--muted); }
+.area-x b{ font-size:10px; font-weight:600; color:var(--text); }
+.area-x span.peak b{ color:var(--primary); }
+.area-x em{ font-style:normal; }
+
+/* 看板面板标题行 + 分段切换（待拔草排序） */
+.dash-panel-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.dash-panel-head h4{ margin:0; }
+.seg-ctl{ display:inline-flex; gap:2px; padding:2px; border-radius:999px; background:rgba(15,23,42,.06); }
+[data-theme="dark"] .seg-ctl{ background:rgba(255,255,255,.07); }
+.seg-ctl button{ border:none; background:transparent; color:var(--muted); font-size:11px; padding:3px 9px; border-radius:999px; transition:background .15s ease,color .15s ease; }
+.seg-ctl button.on{ background:var(--panel); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.08); }
+
+/* 窄屏看板：必须在上面这些基础样式之后，否则同优先级的 flex-direction/align-items 会被覆盖。
+   - 390px 下 12 个月标签会糊成一团：隔一个隐藏，用 visibility 保住位置对齐；
+   - 标题与排序开关上下排：并排时 h4 的文字宽度会把开关挤出卡片右边缘。 */
+@media (max-width: 560px){
+  .area-x span:nth-child(even){ visibility:hidden; }
+  .area-x b,.area-x em{ font-size:9px; }
+  .dash-panel-head{ flex-direction:column; align-items:flex-start; gap:8px; }
+  .seg-ctl{ margin-left:0; }
+}
 
 /* 行动清单 */
 .action-list{ list-style:none; margin:0; padding:0; }

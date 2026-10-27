@@ -539,6 +539,8 @@ const App = {
       installOpen:false, installPhase:'', installPercent:0, installTarget:'',
       installError:'', installCountdown:0, installDead:false,
       dash:null,
+      /* 待拔草清单的排序：评级优先 / 积压天数优先（原来这是两张重复的列表） */
+      wantSort:'rating',
       importPreview:'', importReady:false, importFile:null,
       importBusy:false, importIndet:false, importPercent:0, importText:'',
       pickMode:false, pickCb:null, pickingMap:false, _pickedAt:0,
@@ -655,6 +657,65 @@ const App = {
     dashPriceMax(){ return this.dash ? Math.max(1, ...this.dash.price.buckets.map(b=>b.count)) : 1; },
     dashTagMax(){ return this.dash ? Math.max(1, ...this.dash.tags.top.map(t=>t.count)) : 1; },
     dashMonthMax(){ return this.dash ? Math.max(1, this.dash.monthPeak||0) : 1; },
+
+    /* 状态构成的环形分段：用 stroke-dasharray 画弧，offset 累积保证首尾相接。
+       r=46 与 CSS 里 .dn-* 的半径一致，周长变了这里也要跟着改。 */
+    dashDonut(){
+      const d=this.dash;
+      if(!d||!d.total) return [];
+      const C=2*Math.PI*46;
+      const items=[
+        { key:'visited',  label:'去过', n:d.checkin.visited,  color:'#2f9e6e' },
+        { key:'want',     label:'想去', n:d.checkin.want,     color:'#f0a02f' },
+        { key:'favorite', label:'收藏', n:d.checkin.favorite, color:'#4a7bd8' },
+      ];
+      let acc=0;
+      return items.filter(it=>it.n>0).map(it=>{
+        const len=it.n/d.total*C;
+        const seg={ ...it, dash:len+' '+(C-len), offset:String(-acc) };
+        acc+=len;
+        return seg;
+      });
+    },
+
+    /* 月度面积图的坐标点：viewBox 固定 600×110，preserveAspectRatio=none 交给 CSS 拉伸宽度 */
+    dashAreaPoints(){
+      const d=this.dash;
+      if(!d||!d.months||!d.months.length) return [];
+      const max=Math.max(1, d.monthPeak||1);
+      const W=600, H=110, pad=7;
+      const step=W/Math.max(1, d.months.length-1);
+      return d.months.map((m,i)=>({
+        x:+(i*step).toFixed(1),
+        y:+(H-pad-(m.count/max)*(H-pad*2)).toFixed(1),
+        count:m.count,
+        peak:!!m.count && m.count===d.monthPeak,
+      }));
+    },
+    dashAreaLine(){
+      const pts=this.dashAreaPoints;
+      if(!pts.length) return '';
+      return pts.map((p,i)=>(i?'L':'M')+p.x+' '+p.y).join(' ');
+    },
+    dashAreaPath(){
+      const pts=this.dashAreaPoints;
+      if(!pts.length) return '';
+      return this.dashAreaLine+' L'+pts[pts.length-1].x+' 110 L'+pts[0].x+' 110 Z';
+    },
+
+    /* 待拔草：后端给的是两张榜（按评分 / 按积压），内容高度重叠，这里合并去重后按选择排序 */
+    dashWantList(){
+      const d=this.dash;
+      if(!d||!d.actions) return [];
+      const seen=new Set(), all=[];
+      for(const x of [...(d.actions.topRatedWant||[]), ...(d.actions.oldestWant||[])]){
+        if(seen.has(x.id)) continue;
+        seen.add(x.id); all.push(x);
+      }
+      if(this.wantSort==='days') all.sort((a,b)=>b.days-a.days);
+      else all.sort((a,b)=>(b.rating-a.rating)||(b.days-a.days));
+      return all.slice(0,8);
+    },
   },
   watch:{
     form:{ handler(){ this.scheduleDraft(); }, deep:true },
